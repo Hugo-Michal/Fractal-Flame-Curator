@@ -1,140 +1,235 @@
-# Features
+# Native Fractal-Flame Curator: product specification
 
-This is the shared feature log for the new native Windows fractal-flame curator.
-Every agent must add the newest entry at the top whenever behavior changes.
+This document describes the current product, its user flows, persistent data,
+and acceptance behavior. It is deliberately not a changelog. When a user asks
+for a feature or behavioral change, revise the relevant current-state section
+in the same work item so a future agent can recreate the application from
+scratch without reading Git history.
 
-## Entry format
+## Purpose and boundaries
 
-```text
-### YYYY-MM-DD - Feature name
-- Change: What was added, changed, or removed.
-- Files: Main files affected.
-- Notes: User-visible behavior or follow-up work.
-```
+The application helps a human curate generated fractal flames:
 
-## Current features
+1. It creates reproducible Apophysis-compatible source genomes.
+2. It renders one candidate at a time while continuing generation in the
+   background.
+3. The human rates candidates from one to five stars.
+4. Every human rating preserves both the displayed PNG and its matching source
+   .flame file.
+5. Optional AI learns a preference estimate from those human ratings and ranks
+   future rendered candidates without replacing human judgment.
 
-### 2026-08-22 - Idle CPU, pause, and integrity audit
-- Change: Removed render-frame and repeated full-workspace polling from the idle UI path, changed catalog/rating lookups to indexed linear scans, slowed the AI watcher fallback scan, and made Pause stop active CPU sampling. Also preserved undo history when reusing a workspace, made rating moves roll back both files on publication failure, validated pairs within each star folder, rendered imported final transforms, retained legacy total-sample quality values, and corrected ordinal calibration/Spearman calculations.
-- Files: `src/FractalFlameCurator/MainWindow.xaml.cs`, `src/FractalFlameCurator/Pipeline`, `src/FractalFlameCurator/Storage/RatingStore.cs`, `src/FractalFlameCurator/Rendering/CpuFlameRenderer.cs`, `src/FractalFlameCurator/Generation/FlameValidator.cs`, `src/FractalFlameCurator/Serialization/FlameXmlSerializer.cs`, `src/FractalFlameCurator/Ai`, `tests/FractalFlameCurator.Tests`.
-- Notes: With the existing 2,199-image workspace initialized and rendering stopped, the final WPF build used 0.031 CPU seconds during an 8.01-second steady-state sample (about 0.03% of the 12-logical-processor machine). Workspace refresh remains event-driven; active render progress updates four times per second without disk enumeration.
+The product is a native Windows WPF application. The primary workflow must work
+without a web server, remote rendering, a genetic algorithm, a preexisting
+image dataset, Python, CUDA, or AI. The optional AI feature is additive and
+never controls or edits human ratings.
 
-### 2026-08-20 - Apophysis-compatible flame serialization
-- Change: Corrected saved `.flame` files to use declaration-free UTF-8 XML, native `coefs` affine attributes, direct variation attributes, `hue_rotation`, and Apophysis samples-per-pixel quality derived from the curator's total sample budget.
-- Files: `src/FractalFlameCurator/Serialization/FlameXmlSerializer.cs`, `tests/FractalFlameCurator.Tests/PhaseOneTests.cs`.
-- Notes: The reader remains backward-compatible with the previously emitted `a`–`f` and `var_*` attributes, while new files follow the Apophysis 7X/AV-compatible dialect. The curator's internal sample budget remains unchanged.
+## User interface
 
-### 2026-08-20 - Rated dataset and existing-render AI rescoring
-- Change: Rated rescoring now processes every rated PNG, including legacy PNG-only entries, updates the fixed-width score prefix, and renames a matching `.flame` together with its image when available. Starting AI scoring clears the prior candidate-suppression cache so existing rendered files are rescored on every new session.
-- Files: `src/FractalFlameCurator/Storage/RatingStore.cs`, `src/FractalFlameCurator/Pipeline/ContinuousAiScoringService.cs`, `src/FractalFlameCurator/MainWindow.xaml`, `src/FractalFlameCurator/MainWindow.xaml.cs`, `tests/FractalFlameCurator.Tests/PhaseTwoTests.cs`.
-- Notes: Rating folders are preserved; rescoring changes only score prefixes and never deletes or moves an image between rating folders. Unpaired legacy PNGs remain unpaired.
+The window uses a left control panel and a large image viewport. The Rendering
+and AI Scoring drawers begin expanded; Image, Dataset Statistics, and
+Diagnostics begin collapsed. The preview fits the viewport by default, supports
+pointer-anchored mouse-wheel zoom, and provides Previous, Next, Zoom to fit,
+Actual size, and Undo controls.
 
-### 2026-08-20 - Disabled render-toggle contrast
-- Change: Added an explicit dark disabled-button style so the Pause/Resume render toggle remains gray and readable instead of switching to the WPF white disabled appearance.
-- Files: `src/FractalFlameCurator/App.xaml`.
-- Notes: The style applies consistently to disabled action buttons, including while rated-frame re-rendering locks the Rendering controls.
+### Rendering drawer
 
-### 2026-08-20 - Parallel rated re-render and render-session toggles
-- Change: Rated-frame replacement now runs with the configured Rendering Workers count, reports the active worker count, and disables the Rendering controls while the batch is active. Consolidated Start/Stop and Pause/Resume into two stateful toggle buttons.
-- Files: `src/FractalFlameCurator/MainWindow.xaml`, `src/FractalFlameCurator/MainWindow.xaml.cs`.
-- Notes: The Image drawer’s render settings still control every rated render; cancellation preserves already-completed replacements. Keyboard P and Esc continue to toggle pause and stop the render session.
+The user chooses:
 
-### 2026-08-20 - AI rated-dataset rescoring
-- Change: Reduced AI Scoring actions to Start, Stop, Train Model, and Rescore rated. Added a cancellable action that scores complete rated PNG/.flame pairs with the current AI model without renaming, moving, deleting, or changing their human ratings.
-- Files: `src/FractalFlameCurator/MainWindow.xaml`, `src/FractalFlameCurator/MainWindow.xaml.cs`, `src/FractalFlameCurator/Pipeline/ContinuousAiScoringService.cs`, `tests/FractalFlameCurator.Tests/PhaseTwoTests.cs`.
-- Notes: Rated rescoring uses the existing CUDA/DINOv2 backend and leaves the five human-rating folders intact. Pause/Resume remain available internally but are no longer exposed as menu actions.
+- Output directory; default is Documents/ApophysisCurator.
+- Base random seed.
+- Session limit; default 100 candidates.
+- Worker count; default is between one and four, bounded by logical CPUs.
+- Bounded queue capacity; default 4.
 
-### 2026-08-20 - Simplified AI training warning
-- Change: Removed the “Do not show the small-data warning again” checkbox and the modal training warning dialog from the AI Scoring drawer workflow.
-- Files: `src/FractalFlameCurator/MainWindow.xaml`, `src/FractalFlameCurator/MainWindow.xaml.cs`.
-- Notes: The persistent small/imbalanced-corpus warning remains visible in the menu and training still proceeds without an extra confirmation dialog.
+Start begins a finite render session and changes to Stop while active. Pause
+changes to Resume. Status reports the truthful renderer backend, queue depth,
+ready count, completed/failed renders, elapsed session time, and active sample
+progress. Keyboard P toggles pause/resume and Escape stops rendering.
 
-### 2026-08-20 - Closed dropdown contrast and startup drawer defaults
-- Change: Added an explicit dark ComboBox field template so the selected Oversample and Palette values remain visible in their closed boxes, changed default Gamma to `1` and Black point to `0.85`, and collapsed Image, Dataset Statistics, and Diagnostics drawers at startup.
-- Files: `src/FractalFlameCurator/App.xaml`, `src/FractalFlameCurator/MainWindow.xaml`, `src/FractalFlameCurator/MainWindow.xaml.cs`.
-- Notes: Rendering and AI Scoring remain expanded by default; dropdown popup and tooltip contrast remain dark with light text.
+### Image drawer
 
-### 2026-08-20 - Palette control alignment
-- Change: Matched the Palette dropdown to the other Image controls by using the same stacked label/input layout, width, spacing, and shared ComboBox style.
-- Files: `src/FractalFlameCurator/MainWindow.xaml`.
-- Notes: Palette names and selection behavior are unchanged.
+Image settings affect a source only when the user explicitly invokes a
+re-render. They do not silently alter a saved .flame genome.
 
-### 2026-08-20 - Explicit palette labels
-- Change: Replaced the Palette dropdown display-member lookup with an explicit text template so palette names render clearly in both the selected value and popup list.
-- Files: `src/FractalFlameCurator/MainWindow.xaml`.
-- Notes: Palette behavior and the monochrome default are unchanged.
+| Setting | Default | Meaning |
+|---|---:|---|
+| Output resolution | 2048 by 2048 | Square final image size. |
+| Sample budget | 20,000,000 points | Histogram samples used by the CPU renderer. The UI permits up to 500,000,000. |
+| Oversample | 1 | Real internal render multiplier before downsampling; valid values are 1 to 3. |
+| Filter radius | 0.5 | Downsampling filter radius. |
+| Gamma | 1 in the UI | Tone response for the viewport render. |
+| Brightness | 1.0 | Exposure before tone mapping. |
+| Vibrancy | 1.0 | Saturation effect for color palettes. |
+| White point | 0.0 | Normalized density at or below which pixels are white. |
+| Black point | 0.85 | Normalized density at or above which pixels are black. |
+| Contrast curve | 1.0 | One is neutral; greater values increase midtone separation. |
+| Low-density cutoff | 0.01 | Densities below this become white. |
+| Palette | Monochrome | Explicit default; Fire, Ocean, and Violet are opt-in alternatives. |
 
-### 2026-08-20 - Dark dropdown and tooltip presentation
-- Change: Set the Image drawer dropdowns and tooltips to a dark background with light text so their contrast remains visible under the WPF theme.
-- Files: `src/FractalFlameCurator/App.xaml`.
-- Notes: Oversample and Palette keep their existing labels and behavior; this change affects presentation only.
+Re-render current flame toggles to cancellation while active. It loads the
+source .flame, applies the selected image settings, and replaces only the
+current PNG after a successful render. Re-render rated flames processes all
+complete rated pairs with the configured worker count; it may replace rated
+PNGs in place but preserves star folders and every source .flame file.
 
-### 2026-08-20 - Explicit dropdown contrast and compact drawer layout
-- Change: Replaced the default ComboBox item and ToolTip presentation with explicit black-on-white templates, widened the settings drawer, tightened shared control spacing, and reorganized Rendering and Image settings into denser grids.
-- Files: `src/FractalFlameCurator/App.xaml`, `src/FractalFlameCurator/MainWindow.xaml`.
-- Notes: Font sizes and controls were retained. The Image drawer keeps all settings and actions while reducing vertical space; the left panel can show more content before its vertical scrollbar is needed.
+### Rating and navigation
 
-### 2026-08-20 - Compact image actions and rated-flame replacement
-- Change: Fixed Image drawer combo-box text contrast, compacted action rows without reducing font sizes, merged current re-render cancellation into the same toggle button, and added a cancellable batch action for re-rendering all complete rated PNG/.flame pairs.
-- Files: `src/FractalFlameCurator/App.xaml`, `src/FractalFlameCurator/MainWindow.xaml`, `src/FractalFlameCurator/MainWindow.xaml.cs`, `src/FractalFlameCurator/Storage/RatingStore.cs`, `tests/FractalFlameCurator.Tests/PhaseOneTests.cs`.
-- Notes: The batch action replaces rated PNGs in their existing `ratings/1` through `ratings/5` folders, preserves star assignments and source `.flame` files, and does not save selected image settings back into source genomes. The current and batch buttons both switch to cancellation while active.
+The central viewport shows one ready candidate at a time. The user can assign
+1 through 5 stars, skip to the next candidate, or navigate previous/next.
+Rating immediately moves the matched PNG and .flame pair together. Undo reverses
+the latest rating or re-rating without losing either file. Rating folders are
+the raw human labels and are the source of truth for AI training.
 
-### 2026-08-20 - Viewport refresh after render and image replacement
-- Change: Existing candidates now appear immediately when a render session starts, and replaced PNGs are loaded from a fresh stream so re-rendered images refresh reliably in the viewport.
-- Files: `src/FractalFlameCurator/MainWindow.xaml.cs`.
-- Notes: The current image remains visible while background rendering continues; users can rate it or choose Next to inspect another completed candidate.
+### Optional AI Scoring drawer
 
-### 2026-08-20 - Image tone-control drawer and safe current-flame re-render
-- Change: Added an expandable Image settings drawer with palette, sample budget, oversample, filter radius, gamma, brightness, vibrancy, white/black points, contrast curve, and low-density cutoff. Added an explicit current-flame re-render action with cancellation and temporary-file replacement.
-- Files: `src/FractalFlameCurator/MainWindow.xaml`, `src/FractalFlameCurator/MainWindow.xaml.cs`, `src/FractalFlameCurator/Models/FlameGenome.cs`, `src/FractalFlameCurator/Rendering/ToneMapper.cs`, `src/FractalFlameCurator/Rendering/ArtifactRerenderer.cs`, `tests/FractalFlameCurator.Tests/PhaseOneTests.cs`.
-- Notes: Changing Image values does not alter the viewport until Re-render current flame is pressed. Re-rendering preserves the source `.flame` file and replaces the PNG only after a successful render; cancellation/failure leaves the old image in place. Any cached AI score for the changed image is invalidated. Monochrome remains the explicit default.
+The application displays Python, PyTorch, CUDA, GPU, active-device, and model
+diagnostics. Buttons start/stop scoring, train a model, and rescore the rated
+dataset. A missing or unsuitable Python/CUDA setup disables only AI functions;
+manual rendering and rating stay available.
 
-### 2026-08-20 - Paired PNG and FLAME candidate storage
-- Change: Rating now moves the rendered PNG and matching `.flame` together, AI rescoring renames both files with the same fixed-width score prefix, and undo/re-rating operate on complete pairs.
-- Files: `src/FractalFlameCurator/Storage/SourceArchive.cs`, `src/FractalFlameCurator/Storage/RatingStore.cs`, `src/FractalFlameCurator/Pipeline/ContinuousAiScoringService.cs`, `src/FractalFlameCurator/MainWindow.xaml.cs`, `tests/FractalFlameCurator.Tests`.
-- Notes: Rating folders now contain only matched PNG/`.flame` pairs. Existing workspace files were repaired separately; unmatched orphan `.flame` files were removed after the audit.
+## Manual generation and rendering flow
 
-### 2026-08-19 - Render-session source ID collision fix
-- Change: Added a unique render-session suffix to generated source IDs and made candidate catalog refresh tolerate duplicate legacy IDs without crashing.
-- Files: `src/FractalFlameCurator/Storage/SourceArchive.cs`, `src/FractalFlameCurator/Pipeline/ContinuousRenderService.cs`, `src/FractalFlameCurator/Pipeline/CandidateCatalog.cs`, `tests/FractalFlameCurator.Tests/PhaseTwoTests.cs`.
-- Notes: Existing rendered files are not deleted or renamed by this fix. When a legacy duplicate is encountered, the newest complete image is selected deterministically.
+~~~text
+User chooses seed and session settings
+  -> producer creates a deterministic sequence of seeds
+  -> bounded queue feeds one or more worker tasks
+  -> worker generates and validates a flame genome
+  -> CPU renderer samples points and tone-maps a PNG
+  -> source archive publishes matching PNG and .flame files
+  -> candidate catalog makes the complete candidate available in the viewport
+  -> user rates, skips, re-renders, or navigates while workers continue
+~~~
 
-### 2026-08-19 - CUDA runtime verification and Python version pin
-- Change: Pin the Windows Python launcher used by the DINOv2 worker to Python 3.12, which is supported by the selected PyTorch Windows runtime, and verified PyTorch 2.5.1+cu118 plus DINOv2 ViT-B/14 on `cuda:0` with the installed GTX 1060 6GB.
-- Files: `src/FractalFlameCurator/Ai/PreferenceScoringBackend.cs`.
-- Notes: The app now uses the installed CUDA-capable runtime rather than the machine’s default Python 3.13 interpreter.
+A session seed derives the next candidate seed deterministically from the base
+seed and sequence index. A source ID also contains a unique session suffix so
+separate sessions cannot overwrite one another. Given the same seed, generator
+version, and render settings, the generated genome and pixel result are
+reproducible.
 
-### 2026-08-19 - Optional DINOv2 preference scorer
-- Change: Added an optional CUDA-only PyTorch DINOv2 ViT-B/14 preference scorer with a frozen backbone, four-threshold ordinal head, expected-rating/0–1 score conversion, stable fixed-width score prefixes, model replacement, candidate rescoring, and independent background scoring controls.
-- Files: `src/FractalFlameCurator/Ai`, `src/FractalFlameCurator/Models/PreferenceScoringModels.cs`, `src/FractalFlameCurator/Pipeline/ContinuousAiScoringService.cs`, `src/FractalFlameCurator/Pipeline/CandidateCatalog.cs`, `src/FractalFlameCurator/Storage`, `src/FractalFlameCurator/MainWindow.xaml`, `src/FractalFlameCurator/MainWindow.xaml.cs`, `tests/FractalFlameCurator.Tests/PhaseTwoTests.cs`.
-- Notes: Human rating folders remain the source of truth and are never changed by AI. Training is available for small or empty corpora with explicit unreliable-metrics warnings. CUDA, GPU, PyTorch version, active device, model status, dataset readiness bars, validation metrics, and evaluation-only controls are reported. The bundled Python worker refuses CPU AI execution; manual rendering/rating remain operational when Python/PyTorch/CUDA is unavailable.
+The generator chooses two through five transforms from the supported variation
+registry, varied affine coefficients, weights, colors, optional post
+transforms, camera values, symmetry, and a 256-color palette. Validation allows
+two through twelve transforms so imported valid genomes with a larger count
+remain supported. Invalid, singular, non-finite, unknown-variation, or
+non-renderable genomes are rejected before serialization or rendering.
 
-### 2026-08-19 - Default quality and undo navigation correction
-- Change: Set the default sample budget to 20,000,000 points and fixed Undo navigation so the image that was current before Undo is retained and shown after the undone image is rated or skipped.
-- Files: `src/FractalFlameCurator/Models/FlameGenome.cs`, `src/FractalFlameCurator/MainWindow.xaml.cs`, `src/FractalFlameCurator/Generation/FlameGenerator.cs`, `src/FractalFlameCurator/Serialization/FlameXmlSerializer.cs`.
-- Notes: The explicit maximum remains 500,000,000 points.
+The built-in renderer is a bounded managed CPU renderer. It reports CPU
+honestly and never claims GPU use. Rendering work is cancellable. Pause blocks
+both queue consumption and active renderer progress, so a paused session does
+not continue CPU sampling. The UI updates status at most four times per second
+and does not repeatedly enumerate the workspace while idle.
 
-### 2026-08-19 - Higher sample-budget quality control
-- Change: Raised the practical default sample budget to 20,000,000 points, allowed explicit budgets up to 500,000,000, displayed live sample progress, and stored the selected quality/tone settings in each source `.flame` file.
-- Files: `src/FractalFlameCurator/Models/FlameGenome.cs`, `src/FractalFlameCurator/Pipeline/ContinuousRenderService.cs`, `src/FractalFlameCurator/MainWindow.xaml.cs`, `tests/FractalFlameCurator.Tests/PhaseOneTests.cs`.
-- Notes: 500,000,000 points is intentionally a long-running CPU render; the UI no longer silently reduces that value to 20,000,000.
+## Flame-file compatibility
 
-### 2026-08-19 - Viewport-fit and pointer zoom
-- Change: The preview now fits each square render to the available viewport, refits when the viewport changes, and supports mouse-wheel zoom anchored to the pointer location. Actual size and Zoom to fit remain available.
-- Files: `src/FractalFlameCurator/MainWindow.xaml`, `src/FractalFlameCurator/MainWindow.xaml.cs`.
-- Notes: Zooming uses the rendered image dimensions and keeps the pointed-to detail under the cursor when scrolling is available.
+Each generated candidate has a .flame source file that remains available after
+rating. New files are declaration-free UTF-8 Apophysis 7X-style XML containing:
 
-### 2026-08-19 - Higher-resolution inverted monochrome output
-- Change: Raised the default square render from 1024×1024 to 2048×2048, changed the default monochrome output to black fractal ink on a white background, and fixed dropdown controls to use black text on a white popup/background.
-- Files: `src/FractalFlameCurator/Models/FlameGenome.cs`, `src/FractalFlameCurator/Rendering/CpuFlameRenderer.cs`, `src/FractalFlameCurator/App.xaml`, `src/FractalFlameCurator/MainWindow.xaml`, `tests/FractalFlameCurator.Tests/PhaseOneTests.cs`.
-- Notes: Oversample remains an additional render-time multiplier above the new 2048×2048 base.
+- root flames/flame structure, seed, square size, camera, symmetry, oversample,
+  filter, tone values, and a 256-color palette;
+- native coefs affine attributes and direct variation attributes;
+- post transforms and finalxform when present;
+- hue_rotation and sample-density quality mapped from the curator sample
+  budget.
 
-### 2026-08-19 - Phase 1 native curator
-- Change: Added a WPF/.NET 8 desktop application with deterministic seeded flame generation, Apophysis 7X-style XML serialization, a broad audited variation registry, a bounded background render queue, truthful CPU backend reporting, 2048x2048 default rendering, and manual five-star rating with skip, undo, and safe re-rating.
-- Files: `src/FractalFlameCurator`, `tests/FractalFlameCurator.Tests`, `README.md`.
-- Notes: The built-in renderer is a deterministic managed CPU implementation because no flam3/Apophysis executable is installed. It exposes real sample-budget, oversample, filter-radius, gamma, brightness, vibrancy, and palette controls. GPU rendering and Phase 2 AI scoring are not implemented.
+The reader remains compatible with older files that used a-f affine fields,
+var_* variation attributes, hue, or an earlier total-sample quality value.
+Imported final transforms are validated and rendered.
 
-### 2026-08-19 - Previous implementation removed
-- Change: Removed the old Flask application, heuristic evaluator, genetic algorithm, source scripts, UI files, and dependency files as the starting point for a clean rebuild.
-- Files: Previous implementation source files.
-- Notes: The destructive shell guard prevented removal of generated binary/data directories; they are not part of the new design and must be cleared before implementation. Preserve only this feature log and `agents.md` as project guidance. The first implementation is manual curation; AI scoring is a separate second phase.
+## Workspace and file rules
+
+The selected workspace has this contract:
+
+~~~text
+workspace/
+  rendered/
+    [six-digit-score__]stable-source.png
+    [six-digit-score__]stable-source.flame
+  ratings/
+    1/ through 5/
+      stable-source.png
+      stable-source.flame
+  controls/
+    <control-name>/*.png
+~~~
+
+Unrated generated pairs live in rendered/. A candidate is visible only when its
+PNG and .flame both exist and are non-empty. A six-digit score prefix ranges
+from 000000 to 100000 and is metadata for ordering; it is removed when finding
+the stable source ID and when placing a candidate in a rating folder.
+
+For a new rating, each ratings/N directory contains only matched PNG/.flame
+pairs. The storage layer moves both files through temporary names and rolls the
+pair back if publication fails. Re-rating moves the same pair to the new star
+folder and removes stale duplicate copies. Undo restores it to rendered/ or
+the former star folder. The application can read legacy PNG-only rated images
+for AI dataset compatibility, but it must not create new unpaired ratings.
+
+## Candidate catalog and ordering
+
+CandidateCatalog excludes source IDs already present in a rating folder. It
+groups duplicate legacy IDs and picks the most recently written complete pair
+deterministically. Without AI, candidates are ordered by source ID. With AI
+enabled, scored candidates appear first in descending score order, followed by
+unscored candidates.
+
+## AI preference scoring
+
+AI is optional and CUDA-only. The C# service starts a bundled Python 3.12
+JSON-lines worker. The worker uses a frozen pretrained DINOv2 ViT-B/14 backbone
+and trains only a small ordinal head with four thresholds:
+
+~~~text
+rating >= 2, rating >= 3, rating >= 4, rating >= 5
+~~~
+
+The four cumulative probabilities produce an expected rating, and the displayed
+continuous score is:
+
+~~~text
+(expected rating - 1) / 4
+~~~
+
+Scores range from zero to one. The service watches rendered complete pairs and
+also performs a low-frequency fallback scan. It prefixes the rendered PNG and
+matching .flame with the fixed-width score, then stores the score in the
+catalog. Low scores are retained; AI does not discard candidates.
+
+Training snapshots only ratings/1 through ratings/5. It groups images by stable
+source ID before assigning deterministic train, validation, and test splits to
+avoid near-duplicate leakage. The UI reports rating counts, readiness, ordinal
+accuracy, mean absolute rating error, Spearman/rank correlation, calibration,
+and control-image results. Small or imbalanced datasets are trainable but their
+metrics are explicitly unreliable.
+
+Controls are PNG files under controls/<name>/. They are evaluated only and
+never added to human labels. Trained heads are stored under
+LocalAppData/FractalFlameCurator/models. Starting a new AI session rescans
+existing rendered candidates; retraining replaces the active model and
+rescoring uses the replacement.
+
+Rated-dataset rescoring is deliberately separate: it scores every rated PNG,
+including legacy PNG-only entries, and updates score prefixes without moving,
+deleting, or changing the star folders.
+
+## Reliability and acceptance behavior
+
+The product is correct when these statements hold:
+
+- Fixed inputs reproduce a valid .flame and identical rendered pixels.
+- Default output is a 2048 by 2048 monochrome image.
+- Saved .flame files open as valid Apophysis-compatible XML and older supported
+  files still load.
+- Render sessions obey queue and worker bounds, reach their finite limits, and
+  do not freeze the WPF UI.
+- Pause, stop, current re-render, rated re-render, AI scoring, and training
+  have cancellation paths that preserve complete persisted pairs.
+- A rating, re-rating, and undo keep PNG/.flame files together.
+- The UI reports CPU/GPU and AI availability truthfully.
+- Manual work remains usable when AI is unavailable.
+- Idle status updates do not cause persistent workspace scans or meaningful CPU
+  use.
+
+Automated coverage is split between PhaseOneTests for the manual product and
+PhaseTwoTests for AI/data behavior. Changes to any behavior above require a
+corresponding focused test and an update to this specification.
