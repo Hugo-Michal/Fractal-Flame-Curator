@@ -93,11 +93,7 @@ public sealed class CpuFlameRenderer : IFlameRenderer
             }
             x = transformedX;
             y = transformedY;
-            if (genome.Symmetry > 1 && random.NextBool(0.35))
-            {
-                var angle = random.NextInt(0, genome.Symmetry) * Math.Tau / genome.Symmetry;
-                (x, y) = (x * Math.Cos(angle) - y * Math.Sin(angle), x * Math.Sin(angle) + y * Math.Cos(angle));
-            }
+            ApplySymmetry(genome.Symmetry, random, ref x, ref y);
             colorPosition = colorPosition * 0.65 + transform.Color * 0.35;
 
             if (!double.IsFinite(x) || !double.IsFinite(y) || Math.Abs(x) > 1000 || Math.Abs(y) > 1000)
@@ -150,6 +146,20 @@ public sealed class CpuFlameRenderer : IFlameRenderer
         var index = Array.BinarySearch(cumulativeWeights, value);
         if (index < 0) index = ~index;
         return Math.Clamp(index, 0, cumulativeWeights.Length - 1);
+    }
+
+    private static void ApplySymmetry(int symmetry, DeterministicRandom random, ref double x, ref double y)
+    {
+        if (symmetry is 0 or 1) return;
+
+        var order = symmetry < -1 ? -symmetry : symmetry > 1 ? symmetry : 1;
+        if (order > 1)
+        {
+            var angle = random.NextInt(0, order) * Math.Tau / order;
+            (x, y) = (x * Math.Cos(angle) - y * Math.Sin(angle), x * Math.Sin(angle) + y * Math.Cos(angle));
+        }
+
+        if (symmetry < 0 && random.NextBool(0.5)) x = -x;
     }
 
     private static bool TryApplyTransform(FlameTransform transform, double x, double y, DeterministicRandom random, out double outputX, out double outputY)

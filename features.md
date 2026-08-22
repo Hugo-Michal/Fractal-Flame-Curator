@@ -42,6 +42,39 @@ The user chooses:
 - Worker count; default is between one and four, bounded by logical CPUs.
 - Bounded queue capacity; default 4.
 
+Random generator settings opens a modal, resizable settings window. The window
+uses aligned Parameter, Configuration, and What it changes columns, so every
+control has a visible plain-language explanation. Apply validates the settings
+and uses them for future render sessions. Cancel discards edits. Load defaults
+resets the fields in the window but does not make them active until Apply is
+clicked. An Activate exploration reserve button is visible but disabled with a
+Coming later explanation; no learned or restricted generator profile is active
+yet.
+
+The random-generator window controls:
+
+| Setting | Default | Allowed behavior |
+|---|---:|---|
+| Transform count | 2 through 5 | Integer minimum and maximum from 2 through 12. |
+| Allowed symmetry | Rotational | Rotational, reflection, and dihedral checkboxes. All unchecked disables symmetry. Enabled symmetry types share a hardcoded 40% chance and use random order 2 or 3. |
+| Affine rotation | -180 through 180 degrees | Ordered minimum and maximum within a full rotation. |
+| Affine scale | 0.35 through 0.85 | Ordered minimum and maximum from 0.10 through 1.25. |
+| Affine shear | -0.25 through 0.25 | Ordered minimum and maximum from -1 through 1. |
+| Translation extent | 0.75 | Each axis samples the symmetric negative-to-positive extent; valid extent is 0 through 2. |
+| Transform balance | 35% | Zero produces equal selection weights; larger values permit increasingly uneven transform selection. |
+| Variations per transform | 1 through 3 | Integer minimum and maximum from 1 through 5, bounded by enabled types. |
+| Enabled variation types | All supported | Searchable checklist with Select all and Clear actions; at least one is required. |
+| Variation blend dominance | 50% | Controls even versus dominant normalized variation proportions. |
+| Post-transform chance | 42% | Percentage from zero through 100. |
+| Post rotation | -180 through 180 degrees | Ordered minimum and maximum within a full rotation. |
+| Post scale | 0.75 through 1.25 | Ordered minimum and maximum from 0.25 through 2. |
+| Post translation extent | 0.18 | Symmetric extent from 0 through 1. |
+| Allow final transforms | Off | Checkbox; when enabled, a final transform uses the main affine and variation ranges. |
+| Final-transform chance | 15% | Percentage used only when final transforms are enabled. |
+
+The window is unavailable during an active render session, so a session uses
+one immutable snapshot of the applied settings.
+
 Start begins a finite render session and changes to Stop while active. Pause
 changes to Resume. Status reports the truthful renderer backend, queue depth,
 ready count, completed/failed renders, elapsed session time, and active sample
@@ -107,12 +140,31 @@ separate sessions cannot overwrite one another. Given the same seed, generator
 version, and render settings, the generated genome and pixel result are
 reproducible.
 
-The generator chooses two through five transforms from the supported variation
-registry, varied affine coefficients, weights, colors, optional post
-transforms, camera values, symmetry, and a 256-color palette. Validation allows
-two through twelve transforms so imported valid genomes with a larger count
-remain supported. Invalid, singular, non-finite, unknown-variation, or
-non-renderable genomes are rejected before serialization or rendering.
+The generator uses the applied random-generator settings to choose transform
+count, affine ranges, transform-selection balance, enabled variations,
+normalized variation blends, optional post transforms, and optional final
+transforms. Transform colors remain a fixed zero-to-one ramp. The deprecated
+per-transform symmetry field is not randomized. Camera center is fixed at zero,
+camera scale at 100, and camera rotation at zero. Filter, tone, quality, and
+oversampling are not randomized; the render settings are authoritative.
+
+When symmetry is allowed, 40 percent of generated flames receive one of the
+checked types with a random order of two or three where an order applies.
+Rotational symmetry uses a positive order, reflection uses -1, and dihedral
+symmetry uses a negative order. The CPU renderer applies rotational,
+reflection, and dihedral operations; identity values zero and one have no
+symmetry effect.
+
+Variation weights are saved as non-negative proportions summing to one for
+each transform. A transform with one variation therefore has weight one. The
+variation blend-dominance control changes the spread of those proportions, not
+their total magnitude.
+
+Validation allows two through twelve base transforms so imported valid genomes
+with a larger count remain supported. Invalid settings, singular or non-finite
+transforms, unknown variations, or non-renderable genomes are rejected before
+serialization or rendering. A fixed seed, applied generator-settings snapshot,
+palette, and render settings reproduce the same genome and pixels.
 
 The built-in renderer is a bounded managed CPU renderer. It reports CPU
 honestly and never claims GPU use. Rendering work is cancellable. Pause blocks

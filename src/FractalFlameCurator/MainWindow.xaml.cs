@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private readonly DinoV2PreferenceBackend _aiBackend;
     private readonly ContinuousAiScoringService _aiService;
     private readonly CandidateCatalog _catalog = new();
+    private RandomGeneratorSettings _generatorSettings = RandomGeneratorSettings.CreateDefault();
     private SourceArchive? _archive;
     private RatingStore? _ratingStore;
     private RenderedArtifact? _current;
@@ -121,7 +122,8 @@ public partial class MainWindow : Window
                 QueueCapacity = ParseInt(QueueCapacityTextBox, 4, 1, 64),
                 Seed = ParseLong(SeedTextBox, DateTime.UtcNow.Ticks),
                 Palette = palette,
-                RenderSettings = renderSettings
+                RenderSettings = renderSettings,
+                GeneratorSettings = _generatorSettings.Snapshot()
             };
             _renderService.Start(sessionOptions);
             UpdateRenderActionButtons();
@@ -132,6 +134,13 @@ public partial class MainWindow : Window
         {
             WpfMessageBox.Show(this, exception.Message, "Could not start rendering", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void RandomGeneratorSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (_renderService.Status.IsRunning) return;
+        var dialog = new RandomGeneratorSettingsWindow(_generatorSettings) { Owner = this };
+        if (dialog.ShowDialog() == true) _generatorSettings = dialog.AppliedSettings.Snapshot();
     }
 
     private async void RerenderCurrent_Click(object sender, RoutedEventArgs e)
@@ -687,6 +696,7 @@ public partial class MainWindow : Window
         {
             StartStopRenderButton.IsEnabled = false;
             PauseResumeRenderButton.IsEnabled = false;
+            RandomGeneratorSettingsButton.IsEnabled = false;
             return;
         }
 
@@ -695,6 +705,7 @@ public partial class MainWindow : Window
         PauseResumeRenderButton.Content = status.IsPaused ? "Resume" : "Pause";
         StartStopRenderButton.IsEnabled = true;
         PauseResumeRenderButton.IsEnabled = status.IsRunning;
+        RandomGeneratorSettingsButton.IsEnabled = !status.IsRunning;
     }
 
     private void UpdateDatasetStatistics(DatasetStatistics statistics)

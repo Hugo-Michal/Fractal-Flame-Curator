@@ -28,6 +28,13 @@
               </Grid>
               <Label Content="Base random seed" />
               <TextBox x:Name="SeedTextBox" />
+              <Button x:Name="RandomGeneratorSettingsButton"
+                      Content="Random generator settings…"
+                      Click="RandomGeneratorSettings_Click"
+                      HorizontalAlignment="Left"
+                      Margin="2,7,2,3"
+                      ToolTip="Configure the ranges used to create random fractal flames"
+                      AutomationProperties.HelpText="Open the random fractal generator settings window" />
               <Grid Margin="0,2,0,0">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition />

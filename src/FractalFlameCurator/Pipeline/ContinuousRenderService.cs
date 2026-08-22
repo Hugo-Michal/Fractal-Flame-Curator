@@ -17,6 +17,7 @@ public sealed record ContinuousRenderOptions
     public string SessionId { get; init; } = Guid.NewGuid().ToString("N")[..8];
     public RenderSettings RenderSettings { get; init; } = new();
     public PaletteDefinition Palette { get; init; } = PaletteDefinition.Monochrome;
+    public RandomGeneratorSettings GeneratorSettings { get; init; } = RandomGeneratorSettings.CreateDefault();
 }
 
 public sealed record ContinuousRenderStatus(
@@ -191,7 +192,13 @@ public sealed class ContinuousRenderService : IAsyncDisposable
             try
             {
                 await WaitIfPaused(cancellationToken);
-                var genome = _generator.Generate(job.Seed, new FlameGeneratorOptions { Width = options.RenderSettings.Width, Height = options.RenderSettings.Height, Palette = options.Palette });
+                var genome = _generator.Generate(job.Seed, new FlameGeneratorOptions
+                {
+                    Width = options.RenderSettings.Width,
+                    Height = options.RenderSettings.Height,
+                    Palette = options.Palette,
+                    GeneratorSettings = options.GeneratorSettings
+                });
                 genome.Quality = options.RenderSettings.SampleBudget;
                 genome.Oversample = options.RenderSettings.Oversample;
                 genome.FilterRadius = options.RenderSettings.FilterRadius;

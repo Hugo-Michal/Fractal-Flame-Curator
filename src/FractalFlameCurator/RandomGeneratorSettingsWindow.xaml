@@ -1,0 +1,267 @@
+<Window x:Class="FractalFlameCurator.RandomGeneratorSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Random Generator Settings"
+        Width="1160" Height="820" MinWidth="940" MinHeight="620"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="#0D1218" Foreground="{StaticResource TextBrush}">
+  <Window.Resources>
+    <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+      <Setter Property="Margin" Value="0,14,0,5" />
+    </Style>
+    <Style x:Key="SettingRowStyle" TargetType="Border">
+      <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="Padding" Value="4,8" />
+    </Style>
+    <Style x:Key="SettingNameStyle" TargetType="Label">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+    </Style>
+    <Style x:Key="DescriptionStyle" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="14,0,0,0" />
+    </Style>
+    <Style x:Key="RangeTextBoxStyle" TargetType="TextBox">
+      <Setter Property="Width" Value="90" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+  </Window.Resources>
+
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <StackPanel Grid.Row="0" Margin="2,0,2,10">
+      <TextBlock Text="RANDOM GENERATOR SETTINGS" FontSize="21" FontWeight="SemiBold" />
+      <TextBlock Text="These settings define the random search space used by new render sessions. Each generated flame remains reproducible from its seed and these settings."
+                 Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,0" />
+    </StackPanel>
+
+    <Border Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" Padding="12">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
+          <Grid Margin="4,0,4,2">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="220" />
+              <ColumnDefinition Width="320" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Parameter" FontWeight="SemiBold" Foreground="{StaticResource MutedTextBrush}" />
+            <TextBlock Grid.Column="1" Text="Configuration" FontWeight="SemiBold" Foreground="{StaticResource MutedTextBrush}" />
+            <TextBlock Grid.Column="2" Text="What it changes" FontWeight="SemiBold" Foreground="{StaticResource MutedTextBrush}" Margin="14,0,0,0" />
+          </Grid>
+
+          <TextBlock Text="Structure" Style="{StaticResource SectionTitleStyle}" />
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Transform count" Target="{Binding ElementName=MinimumTransformCountTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Min" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <TextBox x:Name="MinimumTransformCountTextBox" Style="{StaticResource RangeTextBoxStyle}" ToolTip="Minimum number of base transforms, from 2 to 12" />
+                <TextBlock Text="Max" VerticalAlignment="Center" Margin="14,0,6,0" />
+                <TextBox x:Name="MaximumTransformCountTextBox" Style="{StaticResource RangeTextBoxStyle}" ToolTip="Maximum number of base transforms, from 2 to 12" />
+              </StackPanel>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="The number of recursive transformation rules. Fewer transforms generally create simpler structures; more transforms create additional interactions." />
+            </Grid>
+          </Border>
+
+          <TextBlock Text="Symmetry" Style="{StaticResource SectionTitleStyle}" />
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Allowed symmetry types" Style="{StaticResource SettingNameStyle}" />
+              <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                <CheckBox x:Name="RotationalSymmetryCheckBox" Content="Rotational" Foreground="{StaticResource TextBrush}" Margin="0,0,16,0" ToolTip="Repeated rotational sectors" />
+                <CheckBox x:Name="ReflectionSymmetryCheckBox" Content="Reflection" Foreground="{StaticResource TextBrush}" Margin="0,0,16,0" ToolTip="Mirrored bilateral structure" />
+                <CheckBox x:Name="DihedralSymmetryCheckBox" Content="Dihedral" Foreground="{StaticResource TextBrush}" ToolTip="Rotation combined with reflection" />
+              </WrapPanel>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Selects which spatial symmetry families may be generated. Symmetry keeps a fixed 40% generation chance and randomly uses order 2 or 3. Uncheck all types to disable it." />
+            </Grid>
+          </Border>
+
+          <TextBlock Text="Affine transforms" Style="{StaticResource SectionTitleStyle}" />
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Rotation range (degrees)" Target="{Binding ElementName=MinimumAffineRotationTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Min" VerticalAlignment="Center" Margin="0,0,6,0" /><TextBox x:Name="MinimumAffineRotationTextBox" Style="{StaticResource RangeTextBoxStyle}" />
+                <TextBlock Text="Max" VerticalAlignment="Center" Margin="14,0,6,0" /><TextBox x:Name="MaximumAffineRotationTextBox" Style="{StaticResource RangeTextBoxStyle}" />
+              </StackPanel>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Rotates each transform before its nonlinear variations are applied. Relative angles strongly affect the resulting geometry." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Scale range" Target="{Binding ElementName=MinimumAffineScaleTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Min" VerticalAlignment="Center" Margin="0,0,6,0" /><TextBox x:Name="MinimumAffineScaleTextBox" Style="{StaticResource RangeTextBoxStyle}" />
+                <TextBlock Text="Max" VerticalAlignment="Center" Margin="14,0,6,0" /><TextBox x:Name="MaximumAffineScaleTextBox" Style="{StaticResource RangeTextBoxStyle}" />
+              </StackPanel>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Sets the size of each recursive copy. Values below 1 contract; larger values can expand the attractor and produce less stable flames." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Shear range" Target="{Binding ElementName=MinimumAffineShearTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Min" VerticalAlignment="Center" Margin="0,0,6,0" /><TextBox x:Name="MinimumAffineShearTextBox" Style="{StaticResource RangeTextBoxStyle}" />
+                <TextBlock Text="Max" VerticalAlignment="Center" Margin="14,0,6,0" /><TextBox x:Name="MaximumAffineShearTextBox" Style="{StaticResource RangeTextBoxStyle}" />
+              </StackPanel>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Slants the transform coordinate system before applying variations. Larger magnitudes introduce stronger directional distortion." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Translation extent" Target="{Binding ElementName=TranslationExtentTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <TextBox x:Name="TranslationExtentTextBox" Grid.Column="1" Style="{StaticResource RangeTextBoxStyle}" HorizontalAlignment="Left" />
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Maximum movement on each axis before nonlinear variation. For example, 0.75 samples both X and Y from −0.75 to +0.75." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Transform balance" Target="{Binding ElementName=TransformBalanceSlider}" Style="{StaticResource SettingNameStyle}" />
+              <Grid Grid.Column="1">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
+                <Slider x:Name="TransformBalanceSlider" Grid.Column="0" Minimum="0" Maximum="100" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" ToolTip="0 gives equal transform weights; 100 permits strong dominance" />
+                <TextBlock Grid.Column="1" Text="{Binding Value, ElementName=TransformBalanceSlider, StringFormat={}{0:F0}%}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+              </Grid>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Controls how unevenly transforms are selected during iteration. Lower values are balanced; higher values allow particular transforms to dominate." />
+            </Grid>
+          </Border>
+
+          <TextBlock Text="Variations" Style="{StaticResource SectionTitleStyle}" />
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Variations per transform" Target="{Binding ElementName=MinimumVariationCountTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Min" VerticalAlignment="Center" Margin="0,0,6,0" /><TextBox x:Name="MinimumVariationCountTextBox" Style="{StaticResource RangeTextBoxStyle}" />
+                <TextBlock Text="Max" VerticalAlignment="Center" Margin="14,0,6,0" /><TextBox x:Name="MaximumVariationCountTextBox" Style="{StaticResource RangeTextBoxStyle}" />
+              </StackPanel>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Number of nonlinear functions blended inside each transform. A single variation is pure; multiple variations combine their geometry." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Enabled variation types" Target="{Binding ElementName=VariationSearchTextBox}" Style="{StaticResource SettingNameStyle}" VerticalAlignment="Top" />
+              <StackPanel Grid.Column="1">
+                <TextBox x:Name="VariationSearchTextBox" TextChanged="VariationSearch_TextChanged" ToolTip="Filter variation names" AutomationProperties.Name="Search variation types" />
+                <WrapPanel Margin="-2,3,0,3">
+                  <Button Content="Select all" Click="SelectAllVariations_Click" ToolTip="Enable every supported variation" />
+                  <Button Content="Clear" Click="ClearVariations_Click" ToolTip="Disable every variation in the list" />
+                </WrapPanel>
+                <ListBox x:Name="VariationListBox" Height="190" Background="#10161E" BorderBrush="#40566D" BorderThickness="1" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="2">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="80" /></Grid.ColumnDefinitions>
+                        <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled, Mode=TwoWay}" Foreground="{StaticResource TextBrush}">
+                          <TextBlock Text="{Binding Name}" />
+                        </CheckBox>
+                        <TextBlock Grid.Column="1" Text="{Binding Category}" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" />
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </StackPanel>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" VerticalAlignment="Top" Text="Determines which supported nonlinear functions may be selected. Search narrows the visible list only. At least one type must remain enabled." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Blend dominance" Target="{Binding ElementName=BlendDominanceSlider}" Style="{StaticResource SettingNameStyle}" />
+              <Grid Grid.Column="1">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
+                <Slider x:Name="BlendDominanceSlider" Grid.Column="0" Minimum="0" Maximum="100" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" ToolTip="0 creates even variation proportions; 100 permits one variation to dominate" />
+                <TextBlock Grid.Column="1" Text="{Binding Value, ElementName=BlendDominanceSlider, StringFormat={}{0:F0}%}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+              </Grid>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Controls how evenly multiple variations are blended. Generated weights are always normalized to a total of 1." />
+            </Grid>
+          </Border>
+
+          <TextBlock Text="Post transforms" Style="{StaticResource SectionTitleStyle}" />
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Post-transform chance" Target="{Binding ElementName=PostTransformChanceSlider}" Style="{StaticResource SettingNameStyle}" />
+              <Grid Grid.Column="1"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions><Slider x:Name="PostTransformChanceSlider" Grid.Column="0" Minimum="0" Maximum="100" TickFrequency="1" VerticalAlignment="Center" /><TextBlock Grid.Column="1" Text="{Binding Value, ElementName=PostTransformChanceSlider, StringFormat={}{0:F0}%}" HorizontalAlignment="Right" VerticalAlignment="Center" /></Grid>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Probability that each base or final transform receives another affine operation after its nonlinear variations." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Post rotation (degrees)" Target="{Binding ElementName=MinimumPostRotationTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="Min" VerticalAlignment="Center" Margin="0,0,6,0" /><TextBox x:Name="MinimumPostRotationTextBox" Style="{StaticResource RangeTextBoxStyle}" /><TextBlock Text="Max" VerticalAlignment="Center" Margin="14,0,6,0" /><TextBox x:Name="MaximumPostRotationTextBox" Style="{StaticResource RangeTextBoxStyle}" /></StackPanel>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Rotation applied after the nonlinear variation blend." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Post scale" Target="{Binding ElementName=MinimumPostScaleTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="Min" VerticalAlignment="Center" Margin="0,0,6,0" /><TextBox x:Name="MinimumPostScaleTextBox" Style="{StaticResource RangeTextBoxStyle}" /><TextBlock Text="Max" VerticalAlignment="Center" Margin="14,0,6,0" /><TextBox x:Name="MaximumPostScaleTextBox" Style="{StaticResource RangeTextBoxStyle}" /></StackPanel>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Scale applied after the nonlinear variation blend." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Post translation extent" Target="{Binding ElementName=PostTranslationExtentTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <TextBox x:Name="PostTranslationExtentTextBox" Grid.Column="1" Style="{StaticResource RangeTextBoxStyle}" HorizontalAlignment="Left" />
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Maximum movement on each axis after nonlinear variation." />
+            </Grid>
+          </Border>
+
+          <TextBlock Text="Final transform" Style="{StaticResource SectionTitleStyle}" />
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Allow final transforms" Target="{Binding ElementName=AllowFinalTransformsCheckBox}" Style="{StaticResource SettingNameStyle}" />
+              <CheckBox x:Name="AllowFinalTransformsCheckBox" Grid.Column="1" Content="Enabled" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Allows one optional transform to reshape every plotted point without feeding the result back into recursion." />
+            </Grid>
+          </Border>
+          <Border Style="{StaticResource SettingRowStyle}">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Content="Final-transform chance" Target="{Binding ElementName=FinalTransformChanceSlider}" Style="{StaticResource SettingNameStyle}" />
+              <Grid Grid.Column="1" IsEnabled="{Binding IsChecked, ElementName=AllowFinalTransformsCheckBox}"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions><Slider x:Name="FinalTransformChanceSlider" Grid.Column="0" Minimum="0" Maximum="100" TickFrequency="1" VerticalAlignment="Center" /><TextBlock Grid.Column="1" Text="{Binding Value, ElementName=FinalTransformChanceSlider, StringFormat={}{0:F0}%}" HorizontalAlignment="Right" VerticalAlignment="Center" /></Grid>
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Percentage of generated flames that receive a final transform when final transforms are enabled. It reuses the main affine and variation ranges." />
+            </Grid>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <Grid Grid.Row="2" Margin="0,12,0,0">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+      <WrapPanel Grid.Column="0">
+        <Button Content="Load defaults" Click="LoadDefaults_Click" ToolTip="Reset every field to the built-in defaults; changes are not active until Apply is clicked" />
+        <Button Content="Activate exploration reserve" IsEnabled="False" ToolTip="Coming later: blend a learned restricted profile with broad exploratory generation" />
+      </WrapPanel>
+      <WrapPanel Grid.Column="1">
+        <Button Content="Cancel" IsCancel="True" MinWidth="90" ToolTip="Discard changes and close" />
+        <Button Content="Apply" Click="Apply_Click" IsDefault="True" MinWidth="90" ToolTip="Validate and use these settings for future render sessions" />
+      </WrapPanel>
+    </Grid>
+  </Grid>
+</Window>

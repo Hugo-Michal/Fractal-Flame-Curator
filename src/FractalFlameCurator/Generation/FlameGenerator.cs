@@ -7,6 +7,7 @@ public sealed record FlameGeneratorOptions
     public int Width { get; init; } = 2048;
     public int Height { get; init; } = 2048;
     public PaletteDefinition Palette { get; init; } = PaletteDefinition.Monochrome;
+    public RandomGeneratorSettings GeneratorSettings { get; init; } = RandomGeneratorSettings.CreateDefault();
 }
 
 public sealed class FlameGenerator
@@ -14,6 +15,7 @@ public sealed class FlameGenerator
     public FlameGenome Generate(long seed, FlameGeneratorOptions? options = null)
     {
         options ??= new FlameGeneratorOptions();
+        var settings = options.GeneratorSettings.Snapshot();
         var random = new DeterministicRandom(seed);
         var genome = new FlameGenome
         {
@@ -21,68 +23,113 @@ public sealed class FlameGenerator
             Seed = seed,
             Width = options.Width,
             Height = options.Height,
-            CenterX = random.NextSigned(0.35),
-            CenterY = random.NextSigned(0.35),
-            Scale = 80 + random.NextDouble() * 90,
-            Rotate = random.NextSigned(30),
+            CenterX = 0,
+            CenterY = 0,
+            Scale = 100,
+            Rotate = 0,
             Oversample = 1,
-            FilterRadius = 0.35 + random.NextDouble() * 0.85,
+            FilterRadius = 0.5,
             Quality = 20_000_000,
-            Brightness = 0.85 + random.NextDouble() * 0.5,
-            Gamma = 1.7 + random.NextDouble() * 1.0,
-            Vibrancy = 0.8 + random.NextDouble() * 0.2,
-            Symmetry = random.NextInt(-1, 4),
+            Brightness = 1,
+            Gamma = 1,
+            Vibrancy = 1,
+            Symmetry = GenerateSymmetry(settings.SymmetryTypes, random),
             Palette = options.Palette
         };
 
-        var transformCount = random.NextInt(2, 6);
-        var definitions = VariationRegistry.All.ToArray();
+        var transformCount = random.NextInt(settings.MinimumTransformCount, settings.MaximumTransformCount + 1);
+        var enabledNames = settings.EnabledVariations.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var definitions = VariationRegistry.All.Where(definition => enabledNames.Contains(definition.Name)).ToArray();
         for (var i = 0; i < transformCount; i++)
         {
-            var angle = random.NextSigned(Math.PI);
-            var scale = 0.35 + random.NextDouble() * 0.5;
-            var shear = random.NextSigned(0.25);
-            var transform = new FlameTransform
-            {
-                Weight = 0.35 + random.NextDouble() * 0.85,
-                Color = i / (double)Math.Max(1, transformCount - 1),
-                Symmetry = 0.7 + random.NextDouble() * 0.6,
-                A = Math.Cos(angle) * scale,
-                B = -Math.Sin(angle) * scale + shear,
-                C = Math.Sin(angle) * scale,
-                D = Math.Cos(angle) * scale,
-                E = random.NextSigned(0.75),
-                F = random.NextSigned(0.75)
-            };
+            genome.Transforms.Add(CreateTransform(
+                random,
+                settings,
+                definitions,
+                i / (double)Math.Max(1, transformCount - 1),
+                Math.Max(0.01, 1 + random.NextSigned(settings.TransformSelectionBalance))));
+        }
 
-            var variationCount = random.NextInt(1, 4);
-            for (var v = 0; v < variationCount; v++)
-            {
-                var definition = definitions[random.NextInt(0, definitions.Length)];
-                if (transform.Variations.ContainsKey(definition.Name))
-                {
-                    v--;
-                    continue;
-                }
-                transform.Variations[definition.Name] = 0.2 + random.NextDouble() * 0.95;
-            }
-
-            if (random.NextBool(0.42))
-            {
-                var postAngle = random.NextSigned(Math.PI);
-                var postScale = 0.75 + random.NextDouble() * 0.5;
-                transform.PostTransform = new AffineTransform(
-                    Math.Cos(postAngle) * postScale,
-                    -Math.Sin(postAngle) * postScale,
-                    Math.Sin(postAngle) * postScale,
-                    Math.Cos(postAngle) * postScale,
-                    random.NextSigned(0.18),
-                    random.NextSigned(0.18));
-            }
-            genome.Transforms.Add(transform);
+        if (settings.AllowFinalTransforms && random.NextBool(settings.FinalTransformChance))
+        {
+            genome.FinalTransform = CreateTransform(random, settings, definitions, 0.5, 0);
         }
 
         FlameValidator.ThrowIfInvalid(genome);
         return genome;
     }
+
+    private static FlameTransform CreateTransform(
+        DeterministicRandom random,
+        RandomGeneratorSettings settings,
+        IReadOnlyList<VariationDefinition> definitions,
+        double color,
+        double selectionWeight)
+    {
+        var angle = DegreesToRadians(NextRange(random, settings.MinimumAffineRotationDegrees, settings.MaximumAffineRotationDegrees));
+        var scale = NextRange(random, settings.MinimumAffineScale, settings.MaximumAffineScale);
+        var shear = NextRange(random, settings.MinimumAffineShear, settings.MaximumAffineShear);
+        var transform = new FlameTransform
+        {
+            Weight = selectionWeight,
+            Color = color,
+            Symmetry = 0.3,
+            A = Math.Cos(angle) * scale,
+            B = -Math.Sin(angle) * scale + shear,
+            C = Math.Sin(angle) * scale,
+            D = Math.Cos(angle) * scale,
+            E = NextRange(random, -settings.TranslationExtent, settings.TranslationExtent),
+            F = NextRange(random, -settings.TranslationExtent, settings.TranslationExtent)
+        };
+
+        var maximumVariationCount = Math.Min(settings.MaximumVariationCount, definitions.Count);
+        var variationCount = random.NextInt(settings.MinimumVariationCount, maximumVariationCount + 1);
+        var rawWeights = new List<(string Name, double Weight)>(variationCount);
+        while (rawWeights.Count < variationCount)
+        {
+            var definition = definitions[random.NextInt(0, definitions.Count)];
+            if (rawWeights.Any(item => item.Name.Equals(definition.Name, StringComparison.OrdinalIgnoreCase))) continue;
+            rawWeights.Add((definition.Name, Math.Max(0.01, 1 + random.NextSigned(settings.VariationBlendDominance))));
+        }
+
+        var variationTotal = rawWeights.Sum(item => item.Weight);
+        foreach (var item in rawWeights) transform.Variations[item.Name] = item.Weight / variationTotal;
+
+        if (random.NextBool(settings.PostTransformChance))
+        {
+            var postAngle = DegreesToRadians(NextRange(random, settings.MinimumPostRotationDegrees, settings.MaximumPostRotationDegrees));
+            var postScale = NextRange(random, settings.MinimumPostScale, settings.MaximumPostScale);
+            transform.PostTransform = new AffineTransform(
+                Math.Cos(postAngle) * postScale,
+                -Math.Sin(postAngle) * postScale,
+                Math.Sin(postAngle) * postScale,
+                Math.Cos(postAngle) * postScale,
+                NextRange(random, -settings.PostTranslationExtent, settings.PostTranslationExtent),
+                NextRange(random, -settings.PostTranslationExtent, settings.PostTranslationExtent));
+        }
+
+        return transform;
+    }
+
+    private static int GenerateSymmetry(AllowedSymmetryTypes allowedTypes, DeterministicRandom random)
+    {
+        const double symmetryChance = 0.40;
+        if (allowedTypes == AllowedSymmetryTypes.None || !random.NextBool(symmetryChance)) return 1;
+
+        var choices = new List<AllowedSymmetryTypes>(3);
+        if (allowedTypes.HasFlag(AllowedSymmetryTypes.Rotational)) choices.Add(AllowedSymmetryTypes.Rotational);
+        if (allowedTypes.HasFlag(AllowedSymmetryTypes.Reflection)) choices.Add(AllowedSymmetryTypes.Reflection);
+        if (allowedTypes.HasFlag(AllowedSymmetryTypes.Dihedral)) choices.Add(AllowedSymmetryTypes.Dihedral);
+        var type = choices[random.NextInt(0, choices.Count)];
+        var order = random.NextInt(2, 4);
+        return type switch
+        {
+            AllowedSymmetryTypes.Reflection => -1,
+            AllowedSymmetryTypes.Dihedral => -order,
+            _ => order
+        };
+    }
+
+    private static double NextRange(DeterministicRandom random, double minimum, double maximum) => minimum + random.NextDouble() * (maximum - minimum);
+    private static double DegreesToRadians(double degrees) => degrees * Math.PI / 180;
 }

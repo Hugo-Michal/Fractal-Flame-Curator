@@ -125,6 +125,101 @@ public sealed class PhaseOneTests
     }
 
     [Fact]
+    public void GeneratorSettingsControlTheSearchSpaceAndUseFixedCameraDefaults()
+    {
+        var settings = StableGeneratorSettings() with
+        {
+            MinimumTransformCount = 3,
+            MaximumTransformCount = 3,
+            AllowFinalTransforms = true,
+            FinalTransformChance = 1
+        };
+
+        var genome = new FlameGenerator().Generate(4242, new FlameGeneratorOptions { GeneratorSettings = settings });
+
+        Assert.Equal(3, genome.Transforms.Count);
+        Assert.Equal(0, genome.CenterX);
+        Assert.Equal(0, genome.CenterY);
+        Assert.Equal(100, genome.Scale);
+        Assert.Equal(0, genome.Rotate);
+        Assert.Equal(1, genome.Brightness);
+        Assert.Equal(1, genome.Gamma);
+        Assert.Equal(1, genome.Vibrancy);
+        Assert.All(genome.Transforms, transform =>
+        {
+            Assert.Equal(1, transform.Weight);
+            Assert.Equal(0.5, transform.A, 10);
+            Assert.Equal(0, transform.B, 10);
+            Assert.Equal(0, transform.C, 10);
+            Assert.Equal(0.5, transform.D, 10);
+            Assert.Equal(0, transform.E, 10);
+            Assert.Equal(0, transform.F, 10);
+            Assert.Equal(0.3, transform.Symmetry, 10);
+            Assert.Equal(1, transform.Variations["linear"], 10);
+            Assert.Null(transform.PostTransform);
+        });
+        Assert.NotNull(genome.FinalTransform);
+        Assert.Equal(0, genome.FinalTransform!.Weight);
+        Assert.Equal(1, genome.FinalTransform.Variations["linear"], 10);
+    }
+
+    [Fact]
+    public void GeneratedVariationWeightsAreNormalized()
+    {
+        var settings = StableGeneratorSettings() with
+        {
+            MinimumVariationCount = 3,
+            MaximumVariationCount = 3,
+            EnabledVariations = ["linear", "sinusoidal", "spherical"],
+            VariationBlendDominance = 0.8
+        };
+
+        var genome = new FlameGenerator().Generate(781, new FlameGeneratorOptions { GeneratorSettings = settings });
+
+        Assert.All(genome.Transforms, transform => Assert.Equal(1, transform.Variations.Values.Sum(), 10));
+    }
+
+    [Fact]
+    public void AllowedSymmetryTypesUseFixedChanceAndOrders()
+    {
+        var reflectionSettings = StableGeneratorSettings() with { SymmetryTypes = AllowedSymmetryTypes.Reflection };
+        var reflectionValues = Enumerable.Range(1, 100)
+            .Select(seed => new FlameGenerator().Generate(seed, new FlameGeneratorOptions { GeneratorSettings = reflectionSettings }).Symmetry)
+            .ToArray();
+        Assert.Contains(-1, reflectionValues);
+        Assert.All(reflectionValues, symmetry => Assert.Contains(symmetry, new[] { 1, -1 }));
+
+        var dihedralSettings = reflectionSettings with { SymmetryTypes = AllowedSymmetryTypes.Dihedral };
+        var dihedralValues = Enumerable.Range(1, 100)
+            .Select(seed => new FlameGenerator().Generate(seed, new FlameGeneratorOptions { GeneratorSettings = dihedralSettings }).Symmetry)
+            .ToArray();
+        Assert.Contains(dihedralValues, symmetry => symmetry is -2 or -3);
+        Assert.All(dihedralValues, symmetry => Assert.Contains(symmetry, new[] { 1, -2, -3 }));
+    }
+
+    [Fact]
+    public async Task RendererAppliesReflectionSymmetry()
+    {
+        var settings = StableGeneratorSettings() with
+        {
+            SymmetryTypes = AllowedSymmetryTypes.Reflection,
+            TranslationExtent = 0.75
+        };
+        var reflected = Enumerable.Range(1, 100)
+            .Select(seed => new FlameGenerator().Generate(seed, new FlameGeneratorOptions { GeneratorSettings = settings }))
+            .First(genome => genome.Symmetry == -1);
+        var unsymmetrical = reflected.Clone();
+        unsymmetrical.Symmetry = 1;
+        var renderSettings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 20_000, Gamma = 1 };
+        var renderer = new CpuFlameRenderer();
+
+        var reflectedFrame = await renderer.RenderAsync(reflected, renderSettings, null, CancellationToken.None);
+        var unsymmetricalFrame = await renderer.RenderAsync(unsymmetrical, renderSettings, null, CancellationToken.None);
+
+        Assert.False(reflectedFrame.BgraPixels.SequenceEqual(unsymmetricalFrame.BgraPixels));
+    }
+
+    [Fact]
     public async Task RendererCancelsWithoutReturningAFrame()
     {
         var genome = new FlameGenerator().Generate(22);
@@ -302,6 +397,27 @@ public sealed class PhaseOneTests
         Directory.CreateDirectory(path);
         return path;
     }
+
+    private static RandomGeneratorSettings StableGeneratorSettings() => new()
+    {
+        MinimumTransformCount = 2,
+        MaximumTransformCount = 2,
+        SymmetryTypes = AllowedSymmetryTypes.None,
+        MinimumAffineRotationDegrees = 0,
+        MaximumAffineRotationDegrees = 0,
+        MinimumAffineScale = 0.5,
+        MaximumAffineScale = 0.5,
+        MinimumAffineShear = 0,
+        MaximumAffineShear = 0,
+        TranslationExtent = 0,
+        TransformSelectionBalance = 0,
+        MinimumVariationCount = 1,
+        MaximumVariationCount = 1,
+        EnabledVariations = ["linear"],
+        VariationBlendDominance = 0,
+        PostTransformChance = 0,
+        AllowFinalTransforms = false
+    };
 
     private sealed class ThrowingRenderer : IFlameRenderer
     {
