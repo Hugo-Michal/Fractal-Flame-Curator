@@ -24,6 +24,48 @@ without a web server, remote rendering, a genetic algorithm, a preexisting
 image dataset, Python, CUDA, or AI. The optional AI feature is additive and
 never controls or edits human ratings.
 
+## Research parameter analysis tool
+
+The repository includes a separate, read-only research tool under
+`work/flame-parameter-analysis`. It is not part of the WPF application and does
+not alter, rename, move, rate, or score workspace files.
+
+The tool accepts a JSON configuration containing named source folders, optional
+run-ID or source-ID filters, a reference group, comparison groups, histogram
+limits, sample-size guardrails, and the expected random-generator profile.
+Image-only folders may be inventoried without attempting genome analysis. Each
+execution writes a conventional flame-by-parameter CSV matrix, the requested
+transposed parameter-by-flame matrix, source manifest, folder inventory,
+parameter catalog, marginal summaries, numeric histogram probabilities,
+categorical probabilities, generator goodness-of-fit tests, concentration
+comparisons, complete per-transform variation-weight vectors, a machine-readable
+run summary, and a self-contained HTML visual report. Variation-weight
+summaries are conditional on variation count; the report tests two-part
+mixtures across their configured interval and plots three-part mixtures on a
+ternary simplex instead of expecting each component histogram to be flat.
+
+Continuous parameters use deterministic bounded histograms; categorical and
+checkbox parameters use exact empirical probabilities. The tool reconstructs
+generator-facing scale, rotation, shear, and translation from serialized
+affine coefficients. It measures numeric narrowing with target/reference IQR
+ratios, categorical narrowing with normalized entropy, and broader
+distribution change with Jensen–Shannon divergence. It keeps low-sample
+comparisons in CSV but omits them from the headline concentration ranking.
+Most evidence is marginal and univariate; complete variation-weight vectors
+and the three-part simplex diagnostic are retained for the relevant joint
+analysis, while the raw matrix supports later multivariate work.
+
+The statistical layer includes only parameters mapped to a user-configurable
+random-generator control. Hardcoded camera and transform constants, serialized
+affine coefficients, render/tone/palette settings, and derived values without
+an independent generator control remain available in the raw audit matrix but
+are omitted from summaries, distribution profiles, comparisons, goodness-of-
+fit tests, and report graphs.
+
+Enabled variation types are summarized by one categorical distribution of
+selected variation names. Per-variation true/false presence charts are omitted
+from the report and focused statistics to avoid redundant information.
+
 ## User interface
 
 The window uses a left control panel and a large image viewport. The Rendering

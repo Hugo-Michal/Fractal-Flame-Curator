@@ -43,6 +43,7 @@ Run these commands from the repository root:
 dotnet build .\FractalFlameCurator.sln --configuration Release
 dotnet test .\FractalFlameCurator.sln --configuration Release
 dotnet run --project .\src\FractalFlameCurator\FractalFlameCurator.csproj
+py -3.12 .\work\flame-parameter-analysis\analyze_flames.py .\work\flame-parameter-analysis\pass-01.json
 ~~~
 
 The application project publishes the bundled Ai/dinov2_service.py worker.
@@ -66,6 +67,7 @@ that Python file beside the executable under Ai/.
 | src/FractalFlameCurator/Pipeline | BoundedRenderQueue, ContinuousRenderService, CandidateCatalog, and ContinuousAiScoringService coordinate background work and candidate ordering. |
 | src/FractalFlameCurator/Ai | Dataset snapshot/splitting, C# JSON-lines process client, and the Python DINOv2 service. Keep this boundary independent of manual rendering/rating. |
 | tests/FractalFlameCurator.Tests | PhaseOneTests covers manual-workflow acceptance behavior; PhaseTwoTests covers dataset, scoring, and AI-pipeline behavior without requiring CUDA. |
+| work/flame-parameter-analysis | Configurable, read-only Python research tool for flame-parameter extraction, generator-distribution checks, concentration comparisons, CSV matrices, and an HTML report. Its generated `outputs/` remain untracked. |
 | native-fractal-flame-curator-user-manual.pdf | Optional end-user document included in releases; not a source-of-truth engineering specification. |
 
 ## Runtime architecture
