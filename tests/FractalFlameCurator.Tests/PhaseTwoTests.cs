@@ -255,6 +255,34 @@ public sealed class PhaseTwoTests
     }
 
     [Fact]
+    public void CandidateCatalogNextUnseenDoesNotFallBackToAnAlreadySeenCandidate()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var archive = new SourceArchive(root);
+            var generator = new Generation.FlameGenerator();
+            archive.Save(generator.Generate(31), BlankFrame(), 1);
+            archive.Save(generator.Generate(32), BlankFrame(), 2);
+            archive.Save(generator.Generate(33), BlankFrame(), 3);
+            var catalog = new CandidateCatalog();
+            var ratings = new RatingStore(root);
+            catalog.Refresh(archive, ratings);
+            var ordered = catalog.Ordered(false);
+            var seen = ordered.Take(2).Select(artifact => artifact.SourceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            ratings.Rate(ordered[1].ImagePath, 1);
+            catalog.Refresh(archive, ratings);
+
+            var next = catalog.NextUnseen(ordered[1].SourceId, false, seen);
+
+            Assert.NotNull(next);
+            Assert.Equal(ordered[2].SourceId, next!.SourceId);
+            Assert.Null(catalog.FirstUnseen(false, ordered.Select(artifact => artifact.SourceId).ToHashSet(StringComparer.OrdinalIgnoreCase)));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void UnavailableCudaDiagnosticsNeverClaimAiReady()
     {
         var diagnostics = DeviceDiagnostics.Unavailable("CUDA is unavailable");

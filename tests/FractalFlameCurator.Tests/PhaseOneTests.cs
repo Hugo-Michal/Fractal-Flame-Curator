@@ -508,6 +508,43 @@ public sealed class PhaseOneTests
     }
 
     [Fact]
+    public void CopyRatingKeepsRenderedPairHidesItFromCatalogAndUndoRestoresThePreviousState()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var archive = new SourceArchive(root);
+            var artifact = archive.Save(new FlameGenerator().Generate(199), new RenderedFrame(8, 8, new byte[8 * 8 * 4]), 1);
+            var ratings = new RatingStore(root);
+            ratings.Rate(artifact.ImagePath, 2, copyFiles: true);
+            var ratingTwoImage = Path.Combine(root, "ratings", "2", artifact.SourceId + ".png");
+            var ratingFiveImage = Path.Combine(root, "ratings", "5", artifact.SourceId + ".png");
+
+            Assert.True(File.Exists(artifact.ImagePath));
+            Assert.True(File.Exists(artifact.FlamePath));
+            Assert.True(File.Exists(ratingTwoImage));
+            var catalog = new CandidateCatalog();
+            catalog.Refresh(archive, ratings);
+            Assert.Empty(catalog.Ordered(false));
+
+            ratings.Rate(ratingTwoImage, 5, copyFiles: true);
+            Assert.True(File.Exists(artifact.ImagePath));
+            Assert.False(File.Exists(ratingTwoImage));
+            Assert.True(File.Exists(ratingFiveImage));
+            Assert.True(ratings.Undo());
+            Assert.True(File.Exists(ratingTwoImage));
+            Assert.False(File.Exists(ratingFiveImage));
+            Assert.True(ratings.Undo());
+            Assert.False(File.Exists(ratingTwoImage));
+            Assert.True(File.Exists(artifact.ImagePath));
+            catalog.Refresh(archive, ratings);
+            Assert.Single(catalog.Ordered(false));
+            Assert.True(ratings.RatingFoldersContainPairedFiles());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task RerenderReplacesOnlyTheImageAndPreservesTheSourceFlame()
     {
         var root = NewTempDirectory();

@@ -35,6 +35,10 @@
                       Margin="2,7,2,3"
                       ToolTip="Configure the ranges used to create random fractal flames"
                       AutomationProperties.HelpText="Open the random fractal generator settings window" />
+              <CheckBox x:Name="CopyRatedFilesCheckBox"
+                        Content="Copy rated pairs to scoring folders (keep rendered originals)"
+                        Margin="2,2,2,3"
+                        ToolTip="When enabled, rating copies the PNG and .flame pair. Rated source IDs remain hidden from new candidates. When disabled, rating moves the pair." />
               <Grid Margin="0,2,0,0">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition />
@@ -164,7 +168,7 @@
               <TextBlock x:Name="BackendTextBlock" TextWrapping="Wrap" />
               <TextBlock x:Name="AiDiagnosticsTextBlock" TextWrapping="Wrap" />
               <TextBlock x:Name="RatingCountTextBlock" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
-              <TextBlock Text="Keyboard: 1–5 rate · P pause rendering · U undo · Esc stop rendering" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+              <TextBlock Text="Keyboard: 1–5 rate · ←/→ previous/next · P pause rendering · U undo · Esc stop rendering" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
             </StackPanel>
           </Expander>
         </StackPanel>
@@ -186,15 +190,15 @@
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
           <TextBlock x:Name="CurrentTextBlock" Grid.Row="0" TextAlignment="Center" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
           <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center">
-            <Button Content="1 ★" Tag="1" Click="Rating_Click" FontSize="18" MinWidth="82" />
-            <Button Content="2 ★" Tag="2" Click="Rating_Click" FontSize="18" MinWidth="82" />
-            <Button Content="3 ★" Tag="3" Click="Rating_Click" FontSize="18" MinWidth="82" />
-            <Button Content="4 ★" Tag="4" Click="Rating_Click" FontSize="18" MinWidth="82" />
-            <Button Content="5 ★" Tag="5" Click="Rating_Click" FontSize="18" MinWidth="82" />
+            <Button Content="1 ★" Tag="1" Click="Rating_Click" FontSize="18" MinWidth="82" ToolTip="Rate 1 star (1)" />
+            <Button Content="2 ★" Tag="2" Click="Rating_Click" FontSize="18" MinWidth="82" ToolTip="Rate 2 stars (2)" />
+            <Button Content="3 ★" Tag="3" Click="Rating_Click" FontSize="18" MinWidth="82" ToolTip="Rate 3 stars (3)" />
+            <Button Content="4 ★" Tag="4" Click="Rating_Click" FontSize="18" MinWidth="82" ToolTip="Rate 4 stars (4)" />
+            <Button Content="5 ★" Tag="5" Click="Rating_Click" FontSize="18" MinWidth="82" ToolTip="Rate 5 stars (5)" />
           </StackPanel>
           <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,3,0,0">
-            <Button Content="Previous" Click="Previous_Click" MinWidth="100" />
-            <Button Content="Next" Click="Next_Click" MinWidth="100" />
+            <Button Content="Previous (←)" Click="Previous_Click" MinWidth="100" ToolTip="Show the previous candidate (Left Arrow)" />
+            <Button Content="Next (→)" Click="Next_Click" MinWidth="100" ToolTip="Show the next unseen candidate (Right Arrow)" />
             <Button Content="Undo (U)" Click="Undo_Click" MinWidth="100" />
             <Button Content="Zoom to fit" Click="ZoomFit_Click" />
             <Button Content="Actual size" Click="ActualSize_Click" />

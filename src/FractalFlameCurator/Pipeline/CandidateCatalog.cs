@@ -64,6 +64,18 @@ public sealed class CandidateCatalog
 
     public RenderedArtifact? Best(bool aiEnabled) => Ordered(aiEnabled).FirstOrDefault();
 
+    public RenderedArtifact? FirstUnseen(bool aiEnabled, ISet<string> seenSourceIds) =>
+        Ordered(aiEnabled).FirstOrDefault(artifact => !seenSourceIds.Contains(artifact.SourceId));
+
+    public RenderedArtifact? NextUnseen(string sourceId, bool aiEnabled, ISet<string> seenSourceIds)
+    {
+        var ordered = Ordered(aiEnabled);
+        var index = Array.FindIndex(ordered.ToArray(), artifact => string.Equals(artifact.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+        var afterCurrent = index < 0 ? ordered : ordered.Skip(index + 1);
+        return afterCurrent.FirstOrDefault(artifact => !seenSourceIds.Contains(artifact.SourceId))
+            ?? ordered.FirstOrDefault(artifact => !seenSourceIds.Contains(artifact.SourceId));
+    }
+
     public RenderedArtifact? Adjacent(string sourceId, int direction, bool aiEnabled)
     {
         var ordered = Ordered(aiEnabled);

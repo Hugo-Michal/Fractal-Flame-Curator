@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private readonly DinoV2PreferenceBackend _aiBackend;
     private readonly ContinuousAiScoringService _aiService;
     private readonly CandidateCatalog _catalog = new();
+    private readonly Dictionary<string, HashSet<string>> _seenSourceIdsByWorkspace = new(StringComparer.OrdinalIgnoreCase);
     private RandomGeneratorSettings _generatorSettings = RandomGeneratorSettings.CreateDefault();
     private SourceArchive? _archive;
     private RatingStore? _ratingStore;
@@ -474,6 +475,7 @@ public partial class MainWindow : Window
             }
             bitmap.Freeze();
             _current = artifact;
+            GetSeenSourceIds().Add(artifact.SourceId);
             PreviewImage.Source = bitmap;
             _imagePixelWidth = bitmap.PixelWidth;
             _imagePixelHeight = bitmap.PixelHeight;
@@ -487,7 +489,10 @@ public partial class MainWindow : Window
     private void ShowNextReady()
     {
         RefreshCandidates();
-        var next = _current is null ? _catalog.Best(_aiEnabled) : _catalog.Adjacent(_current.SourceId, 1, _aiEnabled);
+        var seenSourceIds = GetSeenSourceIds();
+        var next = _current is null
+            ? _catalog.FirstUnseen(_aiEnabled, seenSourceIds)
+            : _catalog.NextUnseen(_current.SourceId, _aiEnabled, seenSourceIds);
         if (_deferredAfterUndo is { } deferred)
         {
             _deferredAfterUndo = null;
@@ -518,7 +523,7 @@ public partial class MainWindow : Window
         try
         {
             var current = ResolveCurrentArtifact();
-            _ratingStore.Rate(current.ImagePath, rating);
+            _ratingStore.Rate(current.ImagePath, rating, CopyRatedFilesCheckBox.IsChecked == true);
             _lastRated = current;
             RefreshWorkspaceStatistics();
             ShowNextReady();
@@ -592,7 +597,18 @@ public partial class MainWindow : Window
 
     private void Window_KeyDown(object sender, WpfKeyEventArgs e)
     {
-        if (e.Key >= Key.D1 && e.Key <= Key.D5) { Rating_Click(new WpfButton { Tag = (int)e.Key - (int)Key.D0 }, new RoutedEventArgs()); e.Handled = true; }
+        var rating = e.Key switch
+        {
+            Key.D1 or Key.NumPad1 => 1,
+            Key.D2 or Key.NumPad2 => 2,
+            Key.D3 or Key.NumPad3 => 3,
+            Key.D4 or Key.NumPad4 => 4,
+            Key.D5 or Key.NumPad5 => 5,
+            _ => 0
+        };
+        if (rating > 0) { Rating_Click(new WpfButton { Tag = rating }, new RoutedEventArgs()); e.Handled = true; }
+        else if (e.Key == Key.Left) { Previous_Click(sender, e); e.Handled = true; }
+        else if (e.Key == Key.Right) { Next_Click(sender, e); e.Handled = true; }
         else if (e.Key == Key.U) { Undo_Click(sender, e); e.Handled = true; }
         else if (e.Key == Key.P) { Pause_Click(sender, e); e.Handled = true; }
         else if (e.Key == Key.Escape) { Stop_Click(sender, e); e.Handled = true; }
@@ -652,6 +668,17 @@ public partial class MainWindow : Window
     {
         if (_archive is null || _ratingStore is null) return;
         _catalog.Refresh(_archive, _ratingStore);
+    }
+
+    private HashSet<string> GetSeenSourceIds()
+    {
+        var workspace = _archive?.RootDirectory ?? Path.GetFullPath(OutputDirectoryTextBox.Text.Trim());
+        if (!_seenSourceIdsByWorkspace.TryGetValue(workspace, out var seenSourceIds))
+        {
+            seenSourceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            _seenSourceIdsByWorkspace[workspace] = seenSourceIds;
+        }
+        return seenSourceIds;
     }
 
     private void RefreshWorkspaceStatistics()

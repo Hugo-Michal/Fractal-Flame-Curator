@@ -2,7 +2,7 @@ using FractalFlameCurator.Models;
 
 namespace FractalFlameCurator.Storage;
 
-public sealed record RatingAction(string ImagePath, string FlamePath, int NewRating, int? PreviousRating);
+public sealed record RatingAction(string ImagePath, string FlamePath, int NewRating, int? PreviousRating, bool CopyFiles);
 
 public sealed class RatingStore
 {
@@ -18,7 +18,7 @@ public sealed class RatingStore
     public string RootDirectory { get; }
     public string RatingsDirectory { get; }
 
-    public RatingAction Rate(string sourceImagePath, int rating)
+    public RatingAction Rate(string sourceImagePath, int rating, bool copyFiles = false)
     {
         if (rating is < 1 or > 5) throw new ArgumentOutOfRangeException(nameof(rating));
         if (!File.Exists(sourceImagePath)) throw new FileNotFoundException("The source image is not available.", sourceImagePath);
@@ -27,11 +27,12 @@ public sealed class RatingStore
         var sourceFlamePath = SourceArchive.FindMatchingFlamePath(sourceImagePath)
             ?? throw new FileNotFoundException("The matching .flame source is not available.", sourceImagePath);
         var previous = FindRating(sourceImagePath);
-        var action = new RatingAction(sourceImagePath, sourceFlamePath, rating, previous);
+        var action = new RatingAction(sourceImagePath, sourceFlamePath, rating, previous, copyFiles);
         var stableBaseName = CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(sourceImagePath));
         var destinationImagePath = Path.Combine(GetRatingDirectory(rating), stableBaseName);
         var destinationFlamePath = Path.ChangeExtension(destinationImagePath, ".flame");
-        MovePair(sourceImagePath, sourceFlamePath, destinationImagePath, destinationFlamePath);
+        if (copyFiles) CopyPair(sourceImagePath, sourceFlamePath, destinationImagePath, destinationFlamePath);
+        else MovePair(sourceImagePath, sourceFlamePath, destinationImagePath, destinationFlamePath);
         RemoveOtherRatingCopies(sourceImagePath, destinationImagePath, destinationFlamePath);
         _history.Push(action);
         return action;
@@ -45,6 +46,28 @@ public sealed class RatingStore
         if (currentImagePath is null) return false;
         var currentFlamePath = SourceArchive.FindMatchingFlamePath(currentImagePath)
             ?? throw new FileNotFoundException("The matching .flame source is not available.", currentImagePath);
+        if (action.CopyFiles)
+        {
+            if (action.PreviousRating is { } priorRating)
+            {
+                var stableBaseName = CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(action.ImagePath));
+                var destinationImagePath = Path.Combine(GetRatingDirectory(priorRating), stableBaseName);
+                var destinationFlamePath = Path.ChangeExtension(destinationImagePath, ".flame");
+                var sourcePair = FindRenderedPair(CandidateFileNaming.GetSourceId(Path.GetFileName(action.ImagePath)))
+                    ?? (currentImagePath, currentFlamePath);
+                CopyPair(sourcePair.ImagePath, sourcePair.FlamePath, destinationImagePath, destinationFlamePath);
+                RemoveOtherRatingCopies(action.ImagePath, destinationImagePath, destinationFlamePath);
+            }
+            else
+            {
+                File.Delete(currentImagePath);
+                File.Delete(currentFlamePath);
+            }
+
+            _history.Pop();
+            return true;
+        }
+
         if (action.PreviousRating is { } previous)
         {
             var stableBaseName = CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(action.ImagePath));
@@ -126,6 +149,19 @@ public sealed class RatingStore
         return null;
     }
 
+    private (string ImagePath, string FlamePath)? FindRenderedPair(string sourceId)
+    {
+        var renderedDirectory = Path.Combine(RootDirectory, "rendered");
+        if (!Directory.Exists(renderedDirectory)) return null;
+        foreach (var imagePath in Directory.EnumerateFiles(renderedDirectory, "*.png", SearchOption.TopDirectoryOnly))
+        {
+            if (!string.Equals(CandidateFileNaming.GetSourceId(Path.GetFileName(imagePath)), sourceId, StringComparison.OrdinalIgnoreCase)) continue;
+            var flamePath = SourceArchive.FindMatchingFlamePath(imagePath);
+            if (flamePath is not null && SourceArchive.IsCompleteCandidate(imagePath)) return (imagePath, flamePath);
+        }
+        return null;
+    }
+
     private void RemoveOtherRatingCopies(string sourceImagePath, string keepImagePath, string keepFlamePath)
     {
         var sourceId = CandidateFileNaming.GetSourceId(Path.GetFileName(sourceImagePath));
@@ -177,6 +213,42 @@ public sealed class RatingStore
         catch
         {
             if (File.Exists(temporaryImagePath) && !File.Exists(sourceImagePath)) File.Move(temporaryImagePath, sourceImagePath);
+            throw;
+        }
+    }
+
+    private static void CopyPair(string sourceImagePath, string sourceFlamePath, string destinationImagePath, string destinationFlamePath)
+    {
+        sourceImagePath = Path.GetFullPath(sourceImagePath);
+        sourceFlamePath = Path.GetFullPath(sourceFlamePath);
+        destinationImagePath = Path.GetFullPath(destinationImagePath);
+        destinationFlamePath = Path.GetFullPath(destinationFlamePath);
+        if (string.Equals(sourceImagePath, destinationImagePath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(sourceFlamePath, destinationFlamePath, StringComparison.OrdinalIgnoreCase)) return;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destinationImagePath)!);
+        var token = Guid.NewGuid().ToString("N");
+        var temporaryImagePath = destinationImagePath + ".rating-" + token + ".tmp";
+        var temporaryFlamePath = destinationFlamePath + ".rating-" + token + ".tmp";
+        var imagePublished = false;
+        var flamePublished = false;
+        try
+        {
+            File.Copy(sourceImagePath, temporaryImagePath, true);
+            File.Copy(sourceFlamePath, temporaryFlamePath, true);
+            if (File.Exists(destinationImagePath)) File.Delete(destinationImagePath);
+            if (File.Exists(destinationFlamePath)) File.Delete(destinationFlamePath);
+            File.Move(temporaryImagePath, destinationImagePath);
+            imagePublished = true;
+            File.Move(temporaryFlamePath, destinationFlamePath);
+            flamePublished = true;
+        }
+        catch
+        {
+            if (imagePublished && File.Exists(destinationImagePath)) File.Delete(destinationImagePath);
+            if (flamePublished && File.Exists(destinationFlamePath)) File.Delete(destinationFlamePath);
+            if (File.Exists(temporaryImagePath)) File.Delete(temporaryImagePath);
+            if (File.Exists(temporaryFlamePath)) File.Delete(temporaryFlamePath);
             throw;
         }
     }

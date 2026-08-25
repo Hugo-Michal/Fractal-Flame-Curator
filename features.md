@@ -110,9 +110,21 @@ PNGs in place but preserves star folders and every source .flame file.
 
 The central viewport shows one ready candidate at a time. The user can assign
 1 through 5 stars, skip to the next candidate, or navigate previous/next.
-Rating immediately moves the matched PNG and .flame pair together. Undo reverses
-the latest rating or re-rating without losing either file. Rating folders are
-the raw human labels and are the source of truth for AI training.
+The Rendering controls include an optional copy mode. The default moves (cuts)
+the matched PNG and .flame pair into the selected rating folder; copy mode
+leaves the rendered pair in place and copies both files into that folder. In
+either mode, a source ID that is already rated is hidden from the unrated
+viewport. Undo reverses the latest rating or re-rating, removing a copied pair
+or restoring a moved pair as appropriate. Rating folders are the raw human
+labels and are the source of truth for AI training.
+
+The application remembers source IDs shown during the current application
+session. Next selects the next unseen candidate (including newly arrived
+candidates) and does not fall back to an already-seen alphabetical candidate;
+Previous can still revisit candidates already shown. The seen memory starts
+fresh when the application is restarted. Keyboard shortcuts are 1–5 for
+ratings, Left/Right Arrow for previous/next, U for undo, P for pause/resume,
+and Escape to stop rendering.
 
 ### Optional AI Scoring drawer
 
