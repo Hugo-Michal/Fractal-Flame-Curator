@@ -16,8 +16,8 @@ The application helps a human curate generated fractal flames:
 3. The human rates candidates from one to five stars.
 4. Every human rating preserves both the displayed PNG and its matching source
    .flame file.
-5. Optional AI learns a preference estimate from those human ratings and ranks
-   future rendered candidates without replacing human judgment.
+5. Optional AI learns a preference estimate from those human ratings and shows
+   the resulting score without replacing human judgment.
 
 The product is a native Windows WPF application. The primary workflow must work
 without a web server, remote rendering, a genetic algorithm, a preexisting
@@ -38,7 +38,8 @@ with white geometry on the requested orange background (`#F1582B`).
 
 The user chooses:
 
-- Output directory; default is Documents/ApophysisCurator.
+- Output directory; default is Documents/ApophysisCurator on first launch, then
+  the last selected workspace is restored on restart.
 - Base random seed.
 - Session limit; default 100 candidates.
 - Worker count; default is between one and four, bounded by logical CPUs.
@@ -132,8 +133,10 @@ and Escape to stop rendering.
 
 The application displays Python, PyTorch, CUDA, GPU, active-device, and model
 diagnostics. Buttons start/stop scoring, train a model, and rescore the rated
-dataset. A missing or unsuitable Python/CUDA setup disables only AI functions;
-manual rendering and rating stay available.
+dataset. Directly beneath them, the UI displays the exact selected-workspace
+ratings/1–5 path that Train Model will read. A missing or unsuitable
+Python/CUDA setup disables only AI functions; manual rendering and rating stay
+available.
 
 ## Manual generation and rendering flow
 
@@ -228,8 +231,8 @@ workspace/
 
 Unrated generated pairs live in rendered/. A candidate is visible only when its
 PNG and .flame both exist and are non-empty. A six-digit score prefix ranges
-from 000000 to 100000 and is metadata for ordering; it is removed when finding
-the stable source ID and when placing a candidate in a rating folder.
+from 000000 to 100000 and is score metadata; it is removed when finding the
+stable source ID and when placing a candidate in a rating folder.
 
 Each render session writes `generator_profile_run_<session>.json` beside its
 rendered candidates. It records the session seed, the applied random-generator
@@ -248,9 +251,9 @@ unpaired ratings.
 
 CandidateCatalog excludes source IDs already present in a rating folder. It
 groups duplicate legacy IDs and picks the most recently written complete pair
-deterministically. Without AI, candidates are ordered by source ID. With AI
-enabled, scored candidates appear first in descending score order, followed by
-unscored candidates.
+deterministically. With AI disabled, candidates are ordered by source ID in
+ascending order. With AI enabled, they are ordered by source ID in descending
+order; stored AI scores remain visible but do not change the viewport order.
 
 ## AI preference scoring
 

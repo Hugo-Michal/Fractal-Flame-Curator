@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private readonly ContinuousRenderService _renderService;
     private readonly DinoV2PreferenceBackend _aiBackend;
     private readonly ContinuousAiScoringService _aiService;
+    private readonly WorkspacePreferenceStore _workspacePreferenceStore;
     private readonly CandidateCatalog _catalog = new();
     private readonly Dictionary<string, HashSet<string>> _seenSourceIdsByWorkspace = new(StringComparer.OrdinalIgnoreCase);
     private RandomGeneratorSettings _generatorSettings = RandomGeneratorSettings.CreateDefault();
@@ -63,7 +64,10 @@ public partial class MainWindow : Window
         _aiService.ImageScored += AiService_ImageScored;
         _aiService.ScoringFailed += AiService_ScoringFailed;
         _aiService.TrainingCompleted += AiService_TrainingCompleted;
-        OutputDirectoryTextBox.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ApophysisCurator");
+        _workspacePreferenceStore = new WorkspacePreferenceStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FractalFlameCurator"));
+        OutputDirectoryTextBox.Text = _workspacePreferenceStore.Load()
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ApophysisCurator");
+        UpdateTrainingDatasetPath();
         SeedTextBox.Text = DateTime.UtcNow.Ticks.ToString(CultureInfo.InvariantCulture);
         BatchLimitTextBox.Text = "100";
         WorkersTextBox.Text = Math.Max(1, Math.Min(4, Environment.ProcessorCount)).ToString(CultureInfo.InvariantCulture);
@@ -592,7 +596,34 @@ public partial class MainWindow : Window
     private void BrowseOutput_Click(object sender, RoutedEventArgs e)
     {
         using var dialog = new Forms.FolderBrowserDialog { SelectedPath = OutputDirectoryTextBox.Text };
-        if (dialog.ShowDialog() == Forms.DialogResult.OK) OutputDirectoryTextBox.Text = dialog.SelectedPath;
+        if (dialog.ShowDialog() == Forms.DialogResult.OK)
+        {
+            var output = Path.GetFullPath(dialog.SelectedPath);
+            OutputDirectoryTextBox.Text = output;
+            _workspacePreferenceStore.Save(output);
+        }
+    }
+
+    private void OutputDirectoryTextBox_TextChanged(object sender, TextChangedEventArgs e) => UpdateTrainingDatasetPath();
+
+    private void UpdateTrainingDatasetPath()
+    {
+        var workspace = OutputDirectoryTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(workspace))
+        {
+            TrainingDatasetPathTextBlock.Text = "Training dataset: enter an output directory";
+            return;
+        }
+
+        try
+        {
+            var ratingsDirectory = Path.Combine(Path.GetFullPath(workspace), "ratings");
+            TrainingDatasetPathTextBlock.Text = $"Training dataset: {ratingsDirectory}\\1–5";
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
+        {
+            TrainingDatasetPathTextBlock.Text = "Training dataset: enter a valid output directory";
+        }
     }
 
     private void Window_KeyDown(object sender, WpfKeyEventArgs e)
@@ -628,6 +659,7 @@ public partial class MainWindow : Window
     private async void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         if (_closing) return;
+        _workspacePreferenceStore.Save(OutputDirectoryTextBox.Text.Trim());
         e.Cancel = true;
         _closing = true;
         _statusTimer.Stop();
@@ -655,6 +687,7 @@ public partial class MainWindow : Window
     private void EnsureWorkspace()
     {
         var output = Path.GetFullPath(OutputDirectoryTextBox.Text.Trim());
+        _workspacePreferenceStore.Save(output);
         if (_archive is null || _ratingStore is null || !string.Equals(_archive.RootDirectory, output, StringComparison.OrdinalIgnoreCase))
         {
             _archive = new SourceArchive(output);

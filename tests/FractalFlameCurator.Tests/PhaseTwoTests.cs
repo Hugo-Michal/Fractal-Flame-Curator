@@ -264,6 +264,29 @@ public sealed class PhaseTwoTests
     }
 
     [Fact]
+    public void CandidateCatalogUsesAscendingSourceIdsWithoutAiAndDescendingSourceIdsWithAi()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var archive = new SourceArchive(root);
+            var generator = new Generation.FlameGenerator();
+            archive.Save(generator.Generate(41), BlankFrame(), 1);
+            archive.Save(generator.Generate(42), BlankFrame(), 2);
+            archive.Save(generator.Generate(43), BlankFrame(), 3);
+            var catalog = new CandidateCatalog();
+            catalog.Refresh(archive, new RatingStore(root));
+
+            var ascending = catalog.Ordered(false).Select(artifact => artifact.SourceId).ToArray();
+            var descending = catalog.Ordered(true).Select(artifact => artifact.SourceId).ToArray();
+
+            Assert.Equal(ascending.OrderBy(sourceId => sourceId, StringComparer.OrdinalIgnoreCase), ascending);
+            Assert.Equal(ascending.Reverse(), descending);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void CandidateCatalogNextUnseenDoesNotFallBackToAnAlreadySeenCandidate()
     {
         var root = NewTempDirectory();

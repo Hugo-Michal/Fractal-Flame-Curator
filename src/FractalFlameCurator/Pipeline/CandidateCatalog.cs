@@ -56,7 +56,7 @@ public sealed class CandidateCatalog
     {
         var values = _candidates.Values;
         return (aiEnabled
-            ? values.OrderByDescending(value => value.Score is not null).ThenByDescending(value => value.Score?.Score ?? -1).ThenBy(value => value.Artifact.SourceId, StringComparer.OrdinalIgnoreCase)
+            ? values.OrderByDescending(value => value.Artifact.SourceId, StringComparer.OrdinalIgnoreCase)
             : values.OrderBy(value => value.Artifact.SourceId, StringComparer.OrdinalIgnoreCase))
             .Select(value => value.Artifact)
             .ToArray();

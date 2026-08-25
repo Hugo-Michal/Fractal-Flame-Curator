@@ -13,6 +13,24 @@ namespace FractalFlameCurator.Tests;
 public sealed class PhaseOneTests
 {
     [Fact]
+    public void WorkspacePreferenceStoreRestoresTheSelectedWorkspace()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var preferencesDirectory = Path.Combine(root, "preferences");
+            var workspace = Path.Combine(root, "workspace");
+            var store = new WorkspacePreferenceStore(preferencesDirectory);
+
+            Assert.Null(store.Load());
+            store.Save(workspace);
+
+            Assert.Equal(Path.GetFullPath(workspace), new WorkspacePreferenceStore(preferencesDirectory).Load());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void GeneratedFlameIsValidApophysisXml()
     {
         var genome = new FlameGenerator().Generate(12345);
