@@ -4,6 +4,7 @@
         Title="Native Fractal-Flame Curator"
         Width="1540" Height="920" MinWidth="1180" MinHeight="700"
         Background="#0D1218" Foreground="#F3F6FA"
+        Icon="Assets/AppIcon.ico"
         KeyDown="Window_KeyDown" Closing="Window_Closing">
   <Grid Margin="14">
     <Grid.ColumnDefinitions>
@@ -38,7 +39,7 @@
               <CheckBox x:Name="CopyRatedFilesCheckBox"
                         Content="Copy rated pairs to scoring folders (keep rendered originals)"
                         Margin="2,2,2,3"
-                        ToolTip="When enabled, rating copies the PNG and .flame pair. Rated source IDs remain hidden from new candidates. When disabled, rating moves the pair." />
+                        ToolTip="When enabled, rating copies the image and .flame pair. Rated source IDs remain hidden from new candidates. When disabled, rating moves the pair." />
               <Grid Margin="0,2,0,0">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition />
@@ -118,7 +119,7 @@
                 <Button Content="Start AI scoring" Click="StartAi_Click" />
                 <Button Content="Stop AI scoring" Click="StopAi_Click" />
                 <Button Content="Train Model" Click="TrainModel_Click" />
-                <Button x:Name="RescoreRatedDatasetButton" Content="Rescore rated" Click="RescoreRatedDataset_Click" ToolTip="Score all PNG images in ratings/1–5 and update their score prefixes without changing rating folders" />
+                <Button x:Name="RescoreRatedDatasetButton" Content="Rescore rated" Click="RescoreRatedDataset_Click" ToolTip="Score all PNG, JPG, and JPEG images in ratings/1–5 and update their score prefixes without changing rating folders" />
               </WrapPanel>
               <TextBlock x:Name="TrainingWarningTextBlock" Foreground="#F4B860" TextWrapping="Wrap" />
               <TextBlock x:Name="AiStatusTextBlock" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />

@@ -22,7 +22,7 @@ public sealed class RatingStore
     {
         if (rating is < 1 or > 5) throw new ArgumentOutOfRangeException(nameof(rating));
         if (!File.Exists(sourceImagePath)) throw new FileNotFoundException("The source image is not available.", sourceImagePath);
-        if (!string.Equals(Path.GetExtension(sourceImagePath), ".png", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Only rendered PNG images can be rated.");
+        if (!CandidateFileNaming.IsSupportedRasterImagePath(sourceImagePath)) throw new InvalidDataException("Only PNG, JPG, or JPEG images can be rated.");
         sourceImagePath = Path.GetFullPath(sourceImagePath);
         var sourceFlamePath = SourceArchive.FindMatchingFlamePath(sourceImagePath)
             ?? throw new FileNotFoundException("The matching .flame source is not available.", sourceImagePath);
@@ -91,7 +91,8 @@ public sealed class RatingStore
         var stableFileName = CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(sourceImagePath));
         for (var rating = 1; rating <= 5; rating++)
         {
-            if (Directory.EnumerateFiles(GetRatingDirectory(rating), "*.png", SearchOption.TopDirectoryOnly)
+            if (Directory.EnumerateFiles(GetRatingDirectory(rating), "*", SearchOption.TopDirectoryOnly)
+                .Where(CandidateFileNaming.IsSupportedRasterImagePath)
                 .Any(path => string.Equals(CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(path)), stableFileName, StringComparison.OrdinalIgnoreCase))) return rating;
         }
         return null;
@@ -100,7 +101,8 @@ public sealed class RatingStore
     public IReadOnlyList<string> EnumerateRatedImagePaths()
     {
         return Enumerable.Range(1, 5)
-            .SelectMany(rating => Directory.EnumerateFiles(GetRatingDirectory(rating), "*.png", SearchOption.TopDirectoryOnly))
+            .SelectMany(rating => Directory.EnumerateFiles(GetRatingDirectory(rating), "*", SearchOption.TopDirectoryOnly)
+                .Where(CandidateFileNaming.IsSupportedRasterImagePath))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -124,10 +126,10 @@ public sealed class RatingStore
         for (var rating = 1; rating <= 5; rating++)
         {
             var files = Directory.EnumerateFiles(GetRatingDirectory(rating), "*", SearchOption.TopDirectoryOnly).ToArray();
-            if (files.Any(path => !string.Equals(Path.GetExtension(path), ".png", StringComparison.OrdinalIgnoreCase)
+            if (files.Any(path => !CandidateFileNaming.IsSupportedRasterImagePath(path)
                                   && !string.Equals(Path.GetExtension(path), ".flame", StringComparison.OrdinalIgnoreCase))) return false;
 
-            var images = files.Where(path => string.Equals(Path.GetExtension(path), ".png", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var images = files.Where(CandidateFileNaming.IsSupportedRasterImagePath).ToArray();
             var flames = files.Where(path => string.Equals(Path.GetExtension(path), ".flame", StringComparison.OrdinalIgnoreCase)).ToArray();
             var imageSourceIds = images.Select(path => CandidateFileNaming.GetSourceId(Path.GetFileName(path))).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var flameSourceIds = flames.Select(path => CandidateFileNaming.GetSourceId(Path.GetFileName(path))).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -142,7 +144,8 @@ public sealed class RatingStore
     {
         for (var rating = 1; rating <= 5; rating++)
         {
-            var match = Directory.EnumerateFiles(GetRatingDirectory(rating), "*.png", SearchOption.TopDirectoryOnly)
+            var match = Directory.EnumerateFiles(GetRatingDirectory(rating), "*", SearchOption.TopDirectoryOnly)
+                .Where(CandidateFileNaming.IsSupportedRasterImagePath)
                 .FirstOrDefault(path => string.Equals(CandidateFileNaming.GetSourceId(Path.GetFileName(path)), CandidateFileNaming.GetSourceId(Path.GetFileName(sourceImagePath)), StringComparison.OrdinalIgnoreCase));
             if (match is not null) return match;
         }

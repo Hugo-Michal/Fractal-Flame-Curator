@@ -38,6 +38,14 @@ public static class CandidateFileNaming
 
     public static string GetSourceId(string fileName) => Path.GetFileNameWithoutExtension(RemoveScorePrefix(fileName));
 
+    public static bool IsSupportedRasterImagePath(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".png", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static string FormatScore(double score)
     {
         var integer = Math.Clamp((int)Math.Round(Math.Clamp(score, 0, 1) * 100000, MidpointRounding.AwayFromZero), 0, 100000);

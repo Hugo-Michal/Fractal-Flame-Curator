@@ -50,7 +50,7 @@ public sealed class PhaseTwoTests
     }
 
     [Fact]
-    public void RatingDatasetSnapshotParsesOnlyTheFiveHumanFolders()
+    public void RatingDatasetSnapshotParsesPngJpgAndJpegFromTheFiveHumanFolders()
     {
         var root = NewTempDirectory();
         try
@@ -61,12 +61,16 @@ public sealed class PhaseTwoTests
                 var source = archive.Save(new Generation.FlameGenerator().Generate(rating), BlankFrame(), rating);
                 new RatingStore(root).Rate(source.ImagePath, rating);
             }
+            File.WriteAllBytes(Path.Combine(root, "ratings", "5", "web-import.jpg"), [1, 2, 3]);
+            File.WriteAllBytes(Path.Combine(root, "ratings", "5", "web-import.jpeg"), [4, 5, 6]);
             Directory.CreateDirectory(Path.Combine(root, "ratings", "not-a-rating"));
             File.WriteAllBytes(Path.Combine(root, "ratings", "not-a-rating", "ignored.png"), [1]);
             var snapshot = PreferenceDatasetBuilder.Snapshot(root);
-            Assert.Equal(5, snapshot.Images.Count);
+            Assert.Equal(7, snapshot.Images.Count);
             Assert.Equal(1, snapshot.Statistics.CountFor(1));
-            Assert.Equal(1, snapshot.Statistics.CountFor(5));
+            Assert.Equal(3, snapshot.Statistics.CountFor(5));
+            Assert.Contains(snapshot.Images, image => image.ImagePath.EndsWith("web-import.jpg", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(snapshot.Images, image => image.ImagePath.EndsWith("web-import.jpeg", StringComparison.OrdinalIgnoreCase));
         }
         finally { Directory.Delete(root, true); }
     }
@@ -132,7 +136,7 @@ public sealed class PhaseTwoTests
     }
 
     [Fact]
-    public async Task RatedDatasetRescoreUpdatesPrefixesAndIncludesPngOnlyImages()
+    public async Task RatedDatasetRescoreUpdatesPrefixesAndIncludesPngJpgAndJpegOnlyImages()
     {
         var root = NewTempDirectory();
         try
@@ -146,6 +150,8 @@ public sealed class PhaseTwoTests
             var beforeFlame = File.ReadAllText(ratedFlamePath);
             var unpairedImagePath = Path.Combine(root, "ratings", "5", "legacy-style.png");
             BlankFrame().SavePng(unpairedImagePath);
+            var unpairedJpegPath = Path.Combine(root, "ratings", "5", "legacy-photo.jpg");
+            BlankFrame().SavePng(unpairedJpegPath);
 
             await using var service = new ContinuousAiScoringService(new FakeBackend(0.74, "model-one"));
             await service.InitializeAsync();
@@ -154,19 +160,22 @@ public sealed class PhaseTwoTests
             var rescoredImagePath = Path.Combine(root, "ratings", "3", "074000__" + rated.SourceId + ".png");
             var rescoredFlamePath = Path.Combine(root, "ratings", "3", "074000__" + rated.SourceId + ".flame");
             var rescoredUnpairedImagePath = Path.Combine(root, "ratings", "5", "074000__legacy-style.png");
-            Assert.Equal(2, count);
+            var rescoredUnpairedJpegPath = Path.Combine(root, "ratings", "5", "074000__legacy-photo.jpg");
+            Assert.Equal(3, count);
             Assert.False(File.Exists(ratedImagePath));
             Assert.False(File.Exists(ratedFlamePath));
             Assert.True(File.Exists(rescoredImagePath));
             Assert.True(File.Exists(rescoredFlamePath));
             Assert.True(File.Exists(rescoredUnpairedImagePath));
+            Assert.True(File.Exists(rescoredUnpairedJpegPath));
             Assert.Equal(beforeFlame, File.ReadAllText(rescoredFlamePath));
             Assert.Equal(rescoredImagePath, service.Scores[rated.SourceId].ImagePath);
             Assert.Equal(rescoredUnpairedImagePath, service.Scores["legacy-style"].ImagePath);
+            Assert.Equal(rescoredUnpairedJpegPath, service.Scores["legacy-photo"].ImagePath);
             Assert.Equal(0.74, service.Scores[rated.SourceId].Score, 6);
             Assert.Equal(3, ratings.FindRating(rescoredImagePath));
             Assert.Equal(5, ratings.FindRating(rescoredUnpairedImagePath));
-            Assert.Equal(2, ratings.EnumerateRatedImagePaths().Count);
+            Assert.Equal(3, ratings.EnumerateRatedImagePaths().Count);
         }
         finally { Directory.Delete(root, true); }
     }

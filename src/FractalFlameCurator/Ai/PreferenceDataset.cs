@@ -13,7 +13,9 @@ public static class PreferenceDatasetBuilder
         {
             var directory = Path.Combine(root, "ratings", rating.ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (!Directory.Exists(directory)) continue;
-            foreach (var path in Directory.EnumerateFiles(directory, "*.png", SearchOption.TopDirectoryOnly).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
+                         .Where(CandidateFileNaming.IsSupportedRasterImagePath)
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
             {
                 images.Add(new DatasetImage(path, rating, CandidateFileNaming.GetSourceId(Path.GetFileName(path))));
                 counts[rating] = counts.GetValueOrDefault(rating) + 1;
@@ -57,7 +59,8 @@ public static class PreferenceDatasetBuilder
         var controlsRoot = Path.Combine(Path.GetFullPath(rootDirectory), "controls");
         if (!Directory.Exists(controlsRoot)) return [];
         return Directory.EnumerateDirectories(controlsRoot, "*", SearchOption.TopDirectoryOnly)
-            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.png", SearchOption.TopDirectoryOnly)
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
+                .Where(CandidateFileNaming.IsSupportedRasterImagePath)
                 .Select(path => (Name: Path.GetFileName(directory), ImagePath: path)))
             .OrderBy(control => control.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(control => control.ImagePath, StringComparer.OrdinalIgnoreCase)

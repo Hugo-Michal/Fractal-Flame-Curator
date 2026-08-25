@@ -31,6 +31,8 @@ and AI Scoring drawers begin expanded; Image, Dataset Statistics, and
 Diagnostics begin collapsed. The preview fits the viewport by default, supports
 pointer-anchored mouse-wheel zoom, and provides Previous, Next, Zoom to fit,
 Actual size, and Undo controls.
+The window and Windows executable use the supplied triangular logo recolored
+with white geometry on the requested orange background (`#F1582B`).
 
 ### Rendering drawer
 
@@ -238,8 +240,9 @@ For a new rating, each ratings/N directory contains only matched PNG/.flame
 pairs. The storage layer moves both files through temporary names and rolls the
 pair back if publication fails. Re-rating moves the same pair to the new star
 folder and removes stale duplicate copies. Undo restores it to rendered/ or
-the former star folder. The application can read legacy PNG-only rated images
-for AI dataset compatibility, but it must not create new unpaired ratings.
+the former star folder. The application can read legacy PNG-, JPG-, or
+JPEG-only rated images for AI dataset compatibility, but it must not create new
+unpaired ratings.
 
 ## Candidate catalog and ordering
 
@@ -285,8 +288,8 @@ existing rendered candidates; retraining replaces the active model and
 rescoring uses the replacement.
 
 Rated-dataset rescoring is deliberately separate: it scores every rated PNG,
-including legacy PNG-only entries, and updates score prefixes without moving,
-deleting, or changing the star folders.
+JPG, or JPEG, including legacy image-only entries, and updates score prefixes
+without moving, deleting, or changing the star folders.
 
 ## Reliability and acceptance behavior
 

@@ -389,7 +389,7 @@ public partial class MainWindow : Window
         var ratedCount = _ratingStore!.EnumerateRatedImagePaths().Count;
         if (ratedCount == 0)
         {
-            AiStatusTextBlock.Text = "There are no rated PNG images to rescore.";
+            AiStatusTextBlock.Text = "There are no rated PNG, JPG, or JPEG images to rescore.";
             return;
         }
 
@@ -690,7 +690,7 @@ public partial class MainWindow : Window
         }
 
         var statistics = PreferenceDatasetBuilder.Snapshot(_ratingStore.RootDirectory).Statistics;
-        RatingCountTextBlock.Text = $"Rated: {statistics.Total} · PNG/.flame pairs: {_ratingStore.RatingFoldersContainPairedFiles()}";
+        RatingCountTextBlock.Text = $"Rated: {statistics.Total} · image/.flame pairs: {_ratingStore.RatingFoldersContainPairedFiles()}";
         UpdateDatasetStatistics(statistics);
     }
 

@@ -10,8 +10,11 @@
     <AssemblyName>FractalFlameCurator</AssemblyName>
     <RootNamespace>FractalFlameCurator</RootNamespace>
     <Version>1.2.0</Version>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <None Remove="Assets\AppIcon.ico" />
+    <Resource Include="Assets\AppIcon.ico" />
     <Content Include="Ai\dinov2_service.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
