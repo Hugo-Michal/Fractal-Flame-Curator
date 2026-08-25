@@ -22,7 +22,7 @@ reproducible, Apophysis-compatible fractal flames, rendering them locally, and
 collecting human one-to-five-star preferences. Optional AI scoring ranks
 candidates using those human ratings, but manual ratings remain authoritative.
 
-The current product is version 1.2.0. It is a WPF/.NET 8 application with a
+The current product is version 1.3.0. It is a WPF/.NET 8 application with a
 managed CPU renderer and an optional CUDA-only Python DINOv2 worker. Do not
 reintroduce the historical web server, genetic algorithm, heuristic evaluator,
 or research corpus into this application.
