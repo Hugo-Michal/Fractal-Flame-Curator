@@ -57,7 +57,7 @@ public partial class RandomGeneratorSettingsWindow : Window
                 MinimumVariationCount = ReadInt(MinimumVariationCountTextBox, "Minimum variation count", 1, 5),
                 MaximumVariationCount = ReadInt(MaximumVariationCountTextBox, "Maximum variation count", 1, 5),
                 EnabledVariations = _variationChoices.Where(choice => choice.IsEnabled).Select(choice => choice.Name).ToArray(),
-                VariationBlendDominance = BlendDominanceSlider.Value / 100,
+                MinimumVariationShare = ReadDouble(MinimumVariationShareTextBox, "Minimum variation share", 0, 1),
                 PostTransformChance = PostTransformChanceSlider.Value / 100,
                 MinimumPostRotationDegrees = ReadDouble(MinimumPostRotationTextBox, "Minimum post rotation", -180, 180),
                 MaximumPostRotationDegrees = ReadDouble(MaximumPostRotationTextBox, "Maximum post rotation", -180, 180),
@@ -118,7 +118,7 @@ public partial class RandomGeneratorSettingsWindow : Window
         MaximumVariationCountTextBox.Text = Format(snapshot.MaximumVariationCount);
         var enabled = snapshot.EnabledVariations.ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var choice in _variationChoices) choice.IsEnabled = enabled.Contains(choice.Name);
-        BlendDominanceSlider.Value = snapshot.VariationBlendDominance * 100;
+        MinimumVariationShareTextBox.Text = Format(snapshot.MinimumVariationShare);
         PostTransformChanceSlider.Value = snapshot.PostTransformChance * 100;
         MinimumPostRotationTextBox.Text = Format(snapshot.MinimumPostRotationDegrees);
         MaximumPostRotationTextBox.Text = Format(snapshot.MaximumPostRotationDegrees);

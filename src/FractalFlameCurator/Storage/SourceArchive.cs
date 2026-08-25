@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using FractalFlameCurator.Generation;
 using FractalFlameCurator.Models;
 using FractalFlameCurator.Rendering;
 using FractalFlameCurator.Serialization;
@@ -35,6 +38,36 @@ public sealed class SourceArchive
             })
             .OrderBy(artifact => artifact.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    public string SaveGeneratorProfile(string sessionId, long sessionSeed, RandomGeneratorSettings settings)
+    {
+        var path = Path.Combine(RenderedDirectory, $"generator_profile_run_{SanitizeSessionId(sessionId)}.json");
+        var temporaryPath = path + ".tmp";
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        };
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower));
+        var profile = new
+        {
+            ProfileVersion = 1,
+            VariationWeightSamplerVersion = SpaceFillingSimplexSampler.Version,
+            SessionId = sessionId,
+            SessionSeed = sessionSeed,
+            GeneratorSettings = settings.Snapshot()
+        };
+        try
+        {
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(profile, options));
+            File.Move(temporaryPath, path, true);
+            return path;
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
     }
 
     public static bool IsCompleteCandidate(string imagePath)

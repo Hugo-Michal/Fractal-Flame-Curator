@@ -64,7 +64,7 @@ The random-generator window controls:
 | Transform balance | 35% | Zero produces equal selection weights; larger values permit increasingly uneven transform selection. |
 | Variations per transform | 1 through 3 | Integer minimum and maximum from 1 through 5, bounded by enabled types. |
 | Enabled variation types | All supported | Searchable checklist with Select all and Clear actions; at least one is required. |
-| Variation blend dominance | 50% | Controls even versus dominant normalized variation proportions. |
+| Minimum variation share | 0.05 | Lowest share assigned to each selected variation; valid from zero through `1 / maximum variation count`. Multi-variation weights use broad simplex coverage. |
 | Post-transform chance | 42% | Percentage from zero through 100. |
 | Post rotation | -180 through 180 degrees | Ordered minimum and maximum within a full rotation. |
 | Post scale | 0.75 through 1.25 | Ordered minimum and maximum from 0.25 through 2. |
@@ -125,9 +125,9 @@ manual rendering and rating stay available.
 
 ~~~text
 User chooses seed and session settings
-  -> producer creates a deterministic sequence of seeds
-  -> bounded queue feeds one or more worker tasks
-  -> worker generates and validates a flame genome
+  -> producer creates deterministic seeds and validated flame genomes
+  -> one seeded simplex-coverage sequence supplies variation mixtures
+  -> bounded queue feeds finished genomes to one or more worker tasks
   -> CPU renderer samples points and tone-maps a PNG
   -> source archive publishes matching PNG and .flame files
   -> candidate catalog makes the complete candidate available in the viewport
@@ -138,11 +138,13 @@ A session seed derives the next candidate seed deterministically from the base
 seed and sequence index. A source ID also contains a unique session suffix so
 separate sessions cannot overwrite one another. Given the same seed, generator
 version, and render settings, the generated genome and pixel result are
-reproducible.
+reproducible. At session start, the rendered folder receives a JSON generator
+profile containing the session seed, full applied generator-settings snapshot,
+and variation-weight sampler version.
 
 The generator uses the applied random-generator settings to choose transform
 count, affine ranges, transform-selection balance, enabled variations,
-normalized variation blends, optional post transforms, and optional final
+space-filling simplex variation blends, optional post transforms, and optional final
 transforms. Transform colors remain a fixed zero-to-one ramp. The deprecated
 per-transform symmetry field is not randomized. Camera center is fixed at zero,
 camera scale at 100, and camera rotation at zero. Filter, tone, quality, and
@@ -156,9 +158,13 @@ reflection, and dihedral operations; identity values zero and one have no
 symmetry effect.
 
 Variation weights are saved as non-negative proportions summing to one for
-each transform. A transform with one variation therefore has weight one. The
-variation blend-dominance control changes the spread of those proportions, not
-their total magnitude.
+each transform. A transform with one variation therefore has weight one. For
+two through five variations, a seed-scrambled low-discrepancy sequence covers
+the valid line, triangle, or higher-dimensional simplex separately for each
+variation count. The minimum-share control reserves the configured floor for
+every component, and a deterministic shuffle prevents variation names from
+being tied to a simplex coordinate. Genome generation runs in producer order,
+so parallel renderer timing cannot alter the coverage sequence.
 
 Validation allows two through twelve base transforms so imported valid genomes
 with a larger count remain supported. Invalid settings, singular or non-finite
@@ -195,6 +201,7 @@ The selected workspace has this contract:
 ~~~text
 workspace/
   rendered/
+    generator_profile_run_<session>.json
     [six-digit-score__]stable-source.png
     [six-digit-score__]stable-source.flame
   ratings/
@@ -209,6 +216,11 @@ Unrated generated pairs live in rendered/. A candidate is visible only when its
 PNG and .flame both exist and are non-empty. A six-digit score prefix ranges
 from 000000 to 100000 and is metadata for ordering; it is removed when finding
 the stable source ID and when placing a candidate in a rating folder.
+
+Each render session writes `generator_profile_run_<session>.json` beside its
+rendered candidates. It records the session seed, the applied random-generator
+settings snapshot, and variation-weight sampler version; it is metadata, not a
+candidate.
 
 For a new rating, each ratings/N directory contains only matched PNG/.flame
 pairs. The storage layer moves both files through temporary names and rolls the

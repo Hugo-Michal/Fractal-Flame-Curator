@@ -27,7 +27,7 @@ public sealed record RandomGeneratorSettings
     public int MinimumVariationCount { get; init; } = 1;
     public int MaximumVariationCount { get; init; } = 3;
     public string[] EnabledVariations { get; init; } = VariationRegistry.All.Select(definition => definition.Name).ToArray();
-    public double VariationBlendDominance { get; init; } = 0.5;
+    public double MinimumVariationShare { get; init; } = 0.05;
     public double PostTransformChance { get; init; } = 0.42;
     public double MinimumPostRotationDegrees { get; init; } = -180;
     public double MaximumPostRotationDegrees { get; init; } = 180;
@@ -59,7 +59,7 @@ public sealed record RandomGeneratorSettings
         var unknown = enabled.FirstOrDefault(name => !VariationRegistry.Names.Contains(name));
         if (unknown is not null) throw new InvalidDataException($"Unknown variation '{unknown}'.");
 
-        ValidateValue(VariationBlendDominance, 0, 1, "Variation blend dominance");
+        ValidateValue(MinimumVariationShare, 0, 1d / MaximumVariationCount, "Minimum variation share");
         ValidateValue(PostTransformChance, 0, 1, "Post-transform chance");
         ValidateRange(MinimumPostRotationDegrees, MaximumPostRotationDegrees, -180, 180, "Post-transform rotation");
         ValidateRange(MinimumPostScale, MaximumPostScale, 0.25, 2, "Post-transform scale");

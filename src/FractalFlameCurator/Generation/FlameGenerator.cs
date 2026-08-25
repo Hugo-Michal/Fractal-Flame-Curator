@@ -12,11 +12,15 @@ public sealed record FlameGeneratorOptions
 
 public sealed class FlameGenerator
 {
-    public FlameGenome Generate(long seed, FlameGeneratorOptions? options = null)
+    public FlameGenome Generate(
+        long seed,
+        FlameGeneratorOptions? options = null,
+        SpaceFillingSimplexSampler? variationWeightSampler = null)
     {
         options ??= new FlameGeneratorOptions();
         var settings = options.GeneratorSettings.Snapshot();
         var random = new DeterministicRandom(seed);
+        variationWeightSampler ??= new SpaceFillingSimplexSampler(seed);
         var genome = new FlameGenome
         {
             Name = $"flame_seed_{seed}",
@@ -46,13 +50,14 @@ public sealed class FlameGenerator
                 random,
                 settings,
                 definitions,
+                variationWeightSampler,
                 i / (double)Math.Max(1, transformCount - 1),
                 Math.Max(0.01, 1 + random.NextSigned(settings.TransformSelectionBalance))));
         }
 
         if (settings.AllowFinalTransforms && random.NextBool(settings.FinalTransformChance))
         {
-            genome.FinalTransform = CreateTransform(random, settings, definitions, 0.5, 0);
+            genome.FinalTransform = CreateTransform(random, settings, definitions, variationWeightSampler, 0.5, 0);
         }
 
         FlameValidator.ThrowIfInvalid(genome);
@@ -63,6 +68,7 @@ public sealed class FlameGenerator
         DeterministicRandom random,
         RandomGeneratorSettings settings,
         IReadOnlyList<VariationDefinition> definitions,
+        SpaceFillingSimplexSampler variationWeightSampler,
         double color,
         double selectionWeight)
     {
@@ -84,16 +90,16 @@ public sealed class FlameGenerator
 
         var maximumVariationCount = Math.Min(settings.MaximumVariationCount, definitions.Count);
         var variationCount = random.NextInt(settings.MinimumVariationCount, maximumVariationCount + 1);
-        var rawWeights = new List<(string Name, double Weight)>(variationCount);
-        while (rawWeights.Count < variationCount)
+        var variationNames = new List<string>(variationCount);
+        while (variationNames.Count < variationCount)
         {
             var definition = definitions[random.NextInt(0, definitions.Count)];
-            if (rawWeights.Any(item => item.Name.Equals(definition.Name, StringComparison.OrdinalIgnoreCase))) continue;
-            rawWeights.Add((definition.Name, Math.Max(0.01, 1 + random.NextSigned(settings.VariationBlendDominance))));
+            if (variationNames.Contains(definition.Name, StringComparer.OrdinalIgnoreCase)) continue;
+            variationNames.Add(definition.Name);
         }
 
-        var variationTotal = rawWeights.Sum(item => item.Weight);
-        foreach (var item in rawWeights) transform.Variations[item.Name] = item.Weight / variationTotal;
+        var variationWeights = variationWeightSampler.NextWeights(variationCount, settings.MinimumVariationShare, random);
+        for (var i = 0; i < variationCount; i++) transform.Variations[variationNames[i]] = variationWeights[i];
 
         if (random.NextBool(settings.PostTransformChance))
         {

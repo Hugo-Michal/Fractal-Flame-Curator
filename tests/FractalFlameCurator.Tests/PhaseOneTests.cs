@@ -164,19 +164,94 @@ public sealed class PhaseOneTests
     }
 
     [Fact]
-    public void GeneratedVariationWeightsAreNormalized()
+    public void GeneratedVariationWeightsRespectTheConfiguredFloorAndAreNormalized()
     {
         var settings = StableGeneratorSettings() with
         {
             MinimumVariationCount = 3,
             MaximumVariationCount = 3,
             EnabledVariations = ["linear", "sinusoidal", "spherical"],
-            VariationBlendDominance = 0.8
+            MinimumVariationShare = 0.05
         };
 
         var genome = new FlameGenerator().Generate(781, new FlameGeneratorOptions { GeneratorSettings = settings });
 
-        Assert.All(genome.Transforms, transform => Assert.Equal(1, transform.Variations.Values.Sum(), 10));
+        Assert.All(genome.Transforms, transform =>
+        {
+            Assert.Equal(1, transform.Variations.Values.Sum(), 10);
+            Assert.All(transform.Variations.Values, weight => Assert.InRange(weight, 0.05, 0.90));
+        });
+    }
+
+    [Fact]
+    public void SpaceFillingSimplexSamplerIsDeterministicAndValidForEverySupportedCount()
+    {
+        var first = new SpaceFillingSimplexSampler(2468);
+        var second = new SpaceFillingSimplexSampler(2468);
+        var firstRandom = new DeterministicRandom(1357);
+        var secondRandom = new DeterministicRandom(1357);
+
+        for (var sample = 0; sample < 1_000; sample++)
+        {
+            for (var count = 1; count <= 5; count++)
+            {
+                var firstWeights = first.NextWeights(count, 0.05, firstRandom);
+                var secondWeights = second.NextWeights(count, 0.05, secondRandom);
+                Assert.Equal(firstWeights, secondWeights);
+                Assert.Equal(1, firstWeights.Sum(), 10);
+                Assert.All(firstWeights, weight => Assert.InRange(weight, 0.05, 1 - (count - 1) * 0.05));
+            }
+        }
+    }
+
+    [Fact]
+    public void TwoVariationSimplexSamplesCoverTheConfiguredInterval()
+    {
+        const double minimumShare = 0.05;
+        const int binCount = 18;
+        var sampler = new SpaceFillingSimplexSampler(9876);
+        var random = new DeterministicRandom(5432);
+        var samples = Enumerable.Range(0, 4_096)
+            .Select(_ => sampler.NextWeights(2, minimumShare, random)[0])
+            .ToArray();
+        var bins = new int[binCount];
+        foreach (var sample in samples)
+        {
+            var bin = Math.Min(binCount - 1, (int)((sample - minimumShare) / (1 - 2 * minimumShare) * binCount));
+            bins[bin]++;
+        }
+
+        Assert.True(samples.Min() < 0.051);
+        Assert.True(samples.Max() > 0.949);
+        Assert.All(bins, count => Assert.True(count > 150, $"A ratio interval received only {count} samples."));
+    }
+
+    [Fact]
+    public void ThreeVariationSimplexSamplesReachEveryDominantCorner()
+    {
+        var sampler = new SpaceFillingSimplexSampler(1122);
+        var random = new DeterministicRandom(3344);
+        var samples = Enumerable.Range(0, 8_192)
+            .Select(_ => sampler.NextWeights(3, 0.05, random))
+            .ToArray();
+
+        for (var component = 0; component < 3; component++)
+            Assert.Contains(samples, weights => weights[component] > 0.85);
+        Assert.Contains(samples, weights => weights.All(weight => weight is > 0.28 and < 0.39));
+    }
+
+    [Fact]
+    public void MinimumVariationShareCannotExceedTheSimplexCapacity()
+    {
+        var settings = StableGeneratorSettings() with
+        {
+            MinimumVariationCount = 3,
+            MaximumVariationCount = 3,
+            EnabledVariations = ["linear", "sinusoidal", "spherical"],
+            MinimumVariationShare = 0.34
+        };
+
+        Assert.Throws<InvalidDataException>(settings.ThrowIfInvalid);
     }
 
     [Fact]
@@ -325,6 +400,73 @@ public sealed class PhaseOneTests
     }
 
     [Fact]
+    public async Task SessionGenomesDoNotDependOnRenderWorkerTiming()
+    {
+        var firstRoot = NewTempDirectory();
+        var secondRoot = NewTempDirectory();
+        try
+        {
+            var generatorSettings = StableGeneratorSettings() with
+            {
+                MinimumVariationCount = 3,
+                MaximumVariationCount = 3,
+                EnabledVariations = ["linear", "sinusoidal", "spherical"]
+            };
+            var common = new ContinuousRenderOptions
+            {
+                BatchLimit = 20,
+                QueueCapacity = 2,
+                Seed = 24680,
+                SessionId = "determinism",
+                GeneratorSettings = generatorSettings,
+                RenderSettings = new RenderSettings { Width = 32, Height = 32, SampleBudget = 100 }
+            };
+
+            await using (var first = new ContinuousRenderService(new FlameGenerator(), new FastRenderer()))
+            {
+                var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+                first.RenderFailed += failures.Enqueue;
+                first.Start(common with { OutputDirectory = firstRoot, WorkerCount = 1 });
+                await WaitForSession(first, common.BatchLimit);
+                Assert.True(failures.IsEmpty, string.Join(Environment.NewLine, failures.Select(error => error.ToString())));
+            }
+            await using (var second = new ContinuousRenderService(new FlameGenerator(), new FastRenderer()))
+            {
+                var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+                second.RenderFailed += failures.Enqueue;
+                second.Start(common with { OutputDirectory = secondRoot, WorkerCount = Math.Min(2, Environment.ProcessorCount) });
+                await WaitForSession(second, common.BatchLimit);
+                Assert.True(failures.IsEmpty, string.Join(Environment.NewLine, failures.Select(error => error.ToString())));
+            }
+
+            var firstFlames = Directory.EnumerateFiles(Path.Combine(firstRoot, "rendered"), "*.flame")
+                .OrderBy(Path.GetFileName)
+                .Select(File.ReadAllText)
+                .ToArray();
+            var secondFlames = Directory.EnumerateFiles(Path.Combine(secondRoot, "rendered"), "*.flame")
+                .OrderBy(Path.GetFileName)
+                .Select(File.ReadAllText)
+                .ToArray();
+            Assert.Equal(firstFlames, secondFlames);
+            var profile = File.ReadAllText(Path.Combine(firstRoot, "rendered", "generator_profile_run_determinism.json"));
+            Assert.Contains($"\"variation_weight_sampler_version\": \"{SpaceFillingSimplexSampler.Version}\"", profile);
+            Assert.Contains("\"minimum_variation_share\": 0.05", profile);
+        }
+        finally
+        {
+            Directory.Delete(firstRoot, true);
+            Directory.Delete(secondRoot, true);
+        }
+
+        static async Task WaitForSession(ContinuousRenderService service, int expectedCount)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (service.Status.Completed + service.Status.Failed < expectedCount && DateTime.UtcNow < deadline) await Task.Delay(20);
+            Assert.Equal(expectedCount, service.Status.Completed + service.Status.Failed);
+        }
+    }
+
+    [Fact]
     public void RatingMovesPngAndFlameTogetherAndUndoRestoresThePair()
     {
         var root = NewTempDirectory();
@@ -414,7 +556,7 @@ public sealed class PhaseOneTests
         MinimumVariationCount = 1,
         MaximumVariationCount = 1,
         EnabledVariations = ["linear"],
-        VariationBlendDominance = 0,
+        MinimumVariationShare = 0.05,
         PostTransformChance = 0,
         AllowFinalTransforms = false
     };

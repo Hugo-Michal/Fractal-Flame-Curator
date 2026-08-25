@@ -187,13 +187,9 @@
           <Border Style="{StaticResource SettingRowStyle}">
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-              <Label Grid.Column="0" Content="Blend dominance" Target="{Binding ElementName=BlendDominanceSlider}" Style="{StaticResource SettingNameStyle}" />
-              <Grid Grid.Column="1">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
-                <Slider x:Name="BlendDominanceSlider" Grid.Column="0" Minimum="0" Maximum="100" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" ToolTip="0 creates even variation proportions; 100 permits one variation to dominate" />
-                <TextBlock Grid.Column="1" Text="{Binding Value, ElementName=BlendDominanceSlider, StringFormat={}{0:F0}%}" HorizontalAlignment="Right" VerticalAlignment="Center" />
-              </Grid>
-              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Controls how evenly multiple variations are blended. Generated weights are always normalized to a total of 1." />
+              <Label Grid.Column="0" Content="Minimum variation share" Target="{Binding ElementName=MinimumVariationShareTextBox}" Style="{StaticResource SettingNameStyle}" />
+              <TextBox x:Name="MinimumVariationShareTextBox" Grid.Column="1" Style="{StaticResource RangeTextBoxStyle}" HorizontalAlignment="Left" />
+              <TextBlock Grid.Column="2" Style="{StaticResource DescriptionStyle}" Text="Lowest share assigned to each selected variation. Multi-variation blends use a space-filling simplex sequence; the value cannot exceed 1 divided by the maximum variation count." />
             </Grid>
           </Border>
 

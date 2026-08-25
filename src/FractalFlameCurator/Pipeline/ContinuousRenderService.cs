@@ -101,8 +101,13 @@ public sealed class ContinuousRenderService : IAsyncDisposable
             {
                 BatchLimit = Math.Clamp(options.BatchLimit, 1, 1_000_000),
                 QueueCapacity = Math.Clamp(options.QueueCapacity, 1, 64),
-                WorkerCount = Math.Clamp(options.WorkerCount, 1, Math.Max(1, Environment.ProcessorCount))
+                WorkerCount = Math.Clamp(options.WorkerCount, 1, Math.Max(1, Environment.ProcessorCount)),
+                GeneratorSettings = options.GeneratorSettings.Snapshot()
             };
+            new SourceArchive(_options.OutputDirectory).SaveGeneratorProfile(
+                _options.SessionId,
+                _options.Seed,
+                _options.GeneratorSettings);
             _cancellation = new CancellationTokenSource();
             _resume = CompletedSignal();
             _renderEnabled.Set();
@@ -167,13 +172,32 @@ public sealed class ContinuousRenderService : IAsyncDisposable
     private async Task ProduceAsync(CancellationToken cancellationToken)
     {
         var options = _options!;
+        var generatorOptions = new FlameGeneratorOptions
+        {
+            Width = options.RenderSettings.Width,
+            Height = options.RenderSettings.Height,
+            Palette = options.Palette,
+            GeneratorSettings = options.GeneratorSettings
+        };
+        var variationWeightSampler = new SpaceFillingSimplexSampler(options.Seed);
         try
         {
             for (var i = 0; i < options.BatchLimit; i++)
             {
-                await WaitIfPaused(cancellationToken);
-                var seed = unchecked(options.Seed + i * 0x9E3779B9L);
-                await _jobs!.EnqueueAsync(new RenderJob(i + 1, seed), cancellationToken);
+                try
+                {
+                    await WaitIfPaused(cancellationToken);
+                    var seed = unchecked(options.Seed + i * 0x9E3779B9L);
+                    var genome = _generator.Generate(seed, generatorOptions, variationWeightSampler);
+                    ApplyRenderSettings(genome, options.RenderSettings);
+                    await _jobs!.EnqueueAsync(new RenderJob(i + 1, genome), cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception exception)
+                {
+                    Interlocked.Increment(ref _failed);
+                    RenderFailed?.Invoke(exception);
+                }
             }
         }
         catch (OperationCanceledException) { }
@@ -192,19 +216,7 @@ public sealed class ContinuousRenderService : IAsyncDisposable
             try
             {
                 await WaitIfPaused(cancellationToken);
-                var genome = _generator.Generate(job.Seed, new FlameGeneratorOptions
-                {
-                    Width = options.RenderSettings.Width,
-                    Height = options.RenderSettings.Height,
-                    Palette = options.Palette,
-                    GeneratorSettings = options.GeneratorSettings
-                });
-                genome.Quality = options.RenderSettings.SampleBudget;
-                genome.Oversample = options.RenderSettings.Oversample;
-                genome.FilterRadius = options.RenderSettings.FilterRadius;
-                genome.Gamma = options.RenderSettings.Gamma;
-                genome.Brightness = options.RenderSettings.Brightness;
-                genome.Vibrancy = options.RenderSettings.Vibrancy;
+                var genome = job.Genome;
                 var progress = new RenderProgressReporter(_renderEnabled, cancellationToken, update =>
                 {
                     Volatile.Write(ref _activeSamples, update.CompletedSamples);
@@ -231,6 +243,17 @@ public sealed class ContinuousRenderService : IAsyncDisposable
     }
 
     private Task WaitIfPaused(CancellationToken cancellationToken) => _resume.Task.WaitAsync(cancellationToken);
+
+    private static void ApplyRenderSettings(FlameGenome genome, RenderSettings settings)
+    {
+        genome.Quality = settings.SampleBudget;
+        genome.Oversample = settings.Oversample;
+        genome.FilterRadius = settings.FilterRadius;
+        genome.Gamma = settings.Gamma;
+        genome.Brightness = settings.Brightness;
+        genome.Vibrancy = settings.Vibrancy;
+    }
+
     private static TaskCompletionSource<bool> CompletedSignal()
     {
         var signal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -238,7 +261,7 @@ public sealed class ContinuousRenderService : IAsyncDisposable
         return signal;
     }
 
-    private sealed record RenderJob(int Sequence, long Seed);
+    private sealed record RenderJob(int Sequence, FlameGenome Genome);
 
     private sealed class RenderProgressReporter(ManualResetEventSlim renderEnabled, CancellationToken cancellationToken, Action<RenderProgress> report) : IProgress<RenderProgress>
     {

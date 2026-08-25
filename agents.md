@@ -59,7 +59,7 @@ that Python file beside the executable under Ai/.
 | src/FractalFlameCurator/MainWindow.xaml | All visual layout, drawers, controls, and event bindings. |
 | src/FractalFlameCurator/MainWindow.xaml.cs | UI orchestration, status updates, navigation, cancellation, workspace selection, and service lifecycle. Keep UI-only coordination here; move domain behavior to the appropriate module. |
 | src/FractalFlameCurator/Models | In-memory flame, transform, palette, render, scoring, and dataset contracts. VariationRegistry is the supported-variation source of truth. |
-| src/FractalFlameCurator/Generation | Seeded random source, FlameGenerator, and FlameValidator. This owns reproducible valid genomes. |
+| src/FractalFlameCurator/Generation | Seeded random source, FlameGenerator, SpaceFillingSimplexSampler, and FlameValidator. This owns reproducible valid genomes. |
 | src/FractalFlameCurator/Serialization | FlameXmlSerializer reads and writes the Apophysis-compatible .flame dialect and legacy attributes. |
 | src/FractalFlameCurator/Rendering | CpuFlameRenderer produces deterministic pixels, ToneMapper maps density to color, and ArtifactRerenderer safely replaces an existing PNG. |
 | src/FractalFlameCurator/Storage | SourceArchive writes complete source pairs; RatingStore moves, re-rates, validates, and undoes matched PNG/.flame pairs. |
@@ -73,7 +73,7 @@ that Python file beside the executable under Ai/.
 ~~~text
 MainWindow
   |-- ContinuousRenderService
-  |     |-- FlameGenerator -> FlameValidator
+  |     |-- sequential FlameGenerator -> SpaceFillingSimplexSampler -> FlameValidator
   |     |-- CpuFlameRenderer -> ToneMapper
   |     '-- SourceArchive -> rendered PNG/.flame pair
   |
@@ -100,6 +100,7 @@ application may create the following directories:
 ~~~text
 workspace/
   rendered/
+    generator_profile_run_<session>.json
     [scoreprefix__]flame_<sequence>_seed_<seed>_run_<session>.png
     [scoreprefix__]flame_<sequence>_seed_<seed>_run_<session>.flame
   ratings/
@@ -121,6 +122,11 @@ source ID. Rating strips it so rating folders retain score-free stable
 basenames. The five rating folders must contain only matching PNG/.flame pairs;
 legacy PNG-only images may be read for dataset compatibility, but new manual
 ratings must be complete pairs.
+
+Each render session writes `generator_profile_run_<session>.json` beside its
+rendered candidates. It records the session seed, the applied random-generator
+settings snapshot, and the variation-weight sampler version for reproducibility;
+it is metadata, not a candidate.
 
 ## Core invariants
 
