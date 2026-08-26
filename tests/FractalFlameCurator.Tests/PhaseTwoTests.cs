@@ -287,6 +287,25 @@ public sealed class PhaseTwoTests
     }
 
     [Fact]
+    public void CandidateCatalogFindsPersistedUnratedCandidatesInANewWorkspaceSession()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var sourceArchive = new SourceArchive(root);
+            var saved = sourceArchive.Save(new Generation.FlameGenerator().Generate(44), BlankFrame(), 1);
+
+            var resumedCatalog = new CandidateCatalog();
+            resumedCatalog.Refresh(new SourceArchive(root), new RatingStore(root));
+
+            var candidate = resumedCatalog.FirstUnseen(false, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            Assert.NotNull(candidate);
+            Assert.Equal(saved.SourceId, candidate!.SourceId);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void CandidateCatalogNextUnseenDoesNotFallBackToAnAlreadySeenCandidate()
     {
         var root = NewTempDirectory();

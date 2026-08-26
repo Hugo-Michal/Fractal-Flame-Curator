@@ -96,6 +96,16 @@ public partial class MainWindow : Window
     {
         try
         {
+            EnsureWorkspace();
+            if (_catalog.FirstUnseen(_aiEnabled, GetSeenSourceIds()) is { } candidate) ShowArtifact(candidate);
+        }
+        catch (Exception exception)
+        {
+            CurrentTextBlock.Text = $"Could not load rendered candidates: {exception.Message}";
+        }
+
+        try
+        {
             var diagnostics = await _aiService.InitializeAsync();
             UpdateAiDiagnostics(diagnostics);
         }
@@ -628,6 +638,8 @@ public partial class MainWindow : Window
 
     private void Window_KeyDown(object sender, WpfKeyEventArgs e)
     {
+        if (Keyboard.FocusedElement is WpfTextBox) return;
+
         var rating = e.Key switch
         {
             Key.D1 or Key.NumPad1 => 1,

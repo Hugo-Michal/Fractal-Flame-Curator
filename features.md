@@ -111,8 +111,11 @@ PNGs in place but preserves star folders and every source .flame file.
 
 ### Rating and navigation
 
-The central viewport shows one ready candidate at a time. The user can assign
-1 through 5 stars, skip to the next candidate, or navigate previous/next.
+The central viewport shows one ready candidate at a time. When the application
+opens, it loads the first eligible candidate already in the selected
+workspace's rendered folder, so rating can resume without starting a new render
+session. The user can assign 1 through 5 stars, skip to the next candidate, or
+navigate previous/next.
 The Rendering controls include an optional copy mode. The default moves (cuts)
 the matched PNG and .flame pair into the selected rating folder; copy mode
 leaves the rendered pair in place and copies both files into that folder. In
@@ -127,7 +130,8 @@ candidates) and does not fall back to an already-seen alphabetical candidate;
 Previous can still revisit candidates already shown. The seen memory starts
 fresh when the application is restarted. Keyboard shortcuts are 1–5 for
 ratings, Left/Right Arrow for previous/next, U for undo, P for pause/resume,
-and Escape to stop rendering.
+and Escape to stop rendering. Shortcuts do not apply while an editable text
+field has focus, so text and numeric values can be entered normally.
 
 ### Optional AI Scoring drawer
 
