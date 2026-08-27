@@ -2,7 +2,8 @@ using FractalFlameCurator.Models;
 
 namespace FractalFlameCurator.Storage;
 
-public sealed record RatingAction(string ImagePath, string FlamePath, int NewRating, int? PreviousRating, bool CopyFiles);
+public sealed record RatingAction(string ImagePath, string FlamePath, int NewRating, int? PreviousRating, bool CopyFiles, bool PreserveScorePrefix = false);
+public sealed record RatedArtifact(RenderedArtifact Artifact, int Rating);
 
 public sealed class RatingStore
 {
@@ -34,6 +35,24 @@ public sealed class RatingStore
         if (copyFiles) CopyPair(sourceImagePath, sourceFlamePath, destinationImagePath, destinationFlamePath);
         else MovePair(sourceImagePath, sourceFlamePath, destinationImagePath, destinationFlamePath);
         RemoveOtherRatingCopies(sourceImagePath, destinationImagePath, destinationFlamePath);
+        _history.Push(action);
+        return action;
+    }
+
+    public RatingAction ReRate(string ratedImagePath, int rating)
+    {
+        if (rating is < 1 or > 5) throw new ArgumentOutOfRangeException(nameof(rating));
+        if (!File.Exists(ratedImagePath)) throw new FileNotFoundException("The rated image is not available.", ratedImagePath);
+        ratedImagePath = Path.GetFullPath(ratedImagePath);
+        var ratedFlamePath = SourceArchive.FindMatchingFlamePath(ratedImagePath)
+            ?? throw new FileNotFoundException("The matching .flame source is not available.", ratedImagePath);
+        var previous = FindRating(ratedImagePath)
+            ?? throw new InvalidOperationException("Only an image already in a rating folder can be re-rated.");
+        var action = new RatingAction(ratedImagePath, ratedFlamePath, rating, previous, false, true);
+        var destinationImagePath = Path.Combine(GetRatingDirectory(rating), Path.GetFileName(ratedImagePath));
+        var destinationFlamePath = Path.ChangeExtension(destinationImagePath, ".flame");
+        MovePair(ratedImagePath, ratedFlamePath, destinationImagePath, destinationFlamePath);
+        RemoveOtherRatingCopies(ratedImagePath, destinationImagePath, destinationFlamePath);
         _history.Push(action);
         return action;
     }
@@ -70,17 +89,22 @@ public sealed class RatingStore
 
         if (action.PreviousRating is { } previous)
         {
-            var stableBaseName = CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(action.ImagePath));
-            var destinationImagePath = Path.Combine(GetRatingDirectory(previous), stableBaseName);
+            var destinationFileName = action.PreserveScorePrefix
+                ? Path.GetFileName(action.ImagePath)
+                : CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(action.ImagePath));
+            var destinationImagePath = Path.Combine(GetRatingDirectory(previous), destinationFileName);
             MovePair(currentImagePath, currentFlamePath, destinationImagePath, Path.ChangeExtension(destinationImagePath, ".flame"));
         }
         else MovePair(currentImagePath, currentFlamePath, action.ImagePath, action.FlamePath);
+        var restoredFileName = action.PreserveScorePrefix
+            ? Path.GetFileName(action.ImagePath)
+            : CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(action.ImagePath));
         RemoveOtherRatingCopies(action.ImagePath,
             action.PreviousRating is { } previousRating
-                ? Path.Combine(GetRatingDirectory(previousRating), CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(action.ImagePath)))
+                ? Path.Combine(GetRatingDirectory(previousRating), restoredFileName)
                 : action.ImagePath,
             action.PreviousRating is { } previousRatingForFlame
-                ? Path.Combine(GetRatingDirectory(previousRatingForFlame), Path.GetFileNameWithoutExtension(CandidateFileNaming.RemoveScorePrefix(Path.GetFileName(action.ImagePath))) + ".flame")
+                ? Path.ChangeExtension(Path.Combine(GetRatingDirectory(previousRatingForFlame), restoredFileName), ".flame")
                 : action.FlamePath);
         _history.Pop();
         return true;
@@ -108,16 +132,19 @@ public sealed class RatingStore
     }
 
     public IReadOnlyList<RenderedArtifact> EnumerateRatedArtifacts()
+        => EnumerateRatedArtifactsWithRatings().Select(rated => rated.Artifact).ToArray();
+
+    public IReadOnlyList<RatedArtifact> EnumerateRatedArtifactsWithRatings()
     {
         return Enumerable.Range(1, 5)
-            .SelectMany(rating => Directory.EnumerateFiles(GetRatingDirectory(rating), "*.png", SearchOption.TopDirectoryOnly))
-            .Where(SourceArchive.IsCompleteCandidate)
-            .Select(path =>
+            .SelectMany(rating => Directory.EnumerateFiles(GetRatingDirectory(rating), "*.png", SearchOption.TopDirectoryOnly)
+                .Where(SourceArchive.IsCompleteCandidate)
+                .Select(path =>
             {
                 var flamePath = SourceArchive.FindMatchingFlamePath(path)!;
-                return new RenderedArtifact(Path.GetFileNameWithoutExtension(path), path, flamePath, 0, 0);
-            })
-            .OrderBy(artifact => artifact.SourceId, StringComparer.OrdinalIgnoreCase)
+                return new RatedArtifact(new RenderedArtifact(Path.GetFileNameWithoutExtension(path), path, flamePath, 0, 0), rating);
+            }))
+            .OrderBy(rated => rated.Artifact.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 

@@ -50,6 +50,59 @@ public sealed class PhaseTwoTests
     }
 
     [Fact]
+    public void RatingMismatchCatalogRanksOnlyPredictionsOutsideTheirStarBands()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var archive = new SourceArchive(root);
+            var ratings = new RatingStore(root);
+            var high = archive.Save(new Generation.FlameGenerator().Generate(101), BlankFrame(), 1);
+            var low = archive.Save(new Generation.FlameGenerator().Generate(102), BlankFrame(), 2);
+            var aligned = archive.Save(new Generation.FlameGenerator().Generate(103), BlankFrame(), 3);
+            ratings.Rate(high.ImagePath, 3);
+            ratings.Rate(low.ImagePath, 3);
+            ratings.Rate(aligned.ImagePath, 1);
+            PrefixRatedPair(root, 3, high.SourceId, 1);
+            PrefixRatedPair(root, 3, low.SourceId, 0);
+            PrefixRatedPair(root, 1, aligned.SourceId, 0.1);
+
+            var mismatches = RatingMismatchCatalog.Build(ratings);
+
+            Assert.Equal([high.SourceId, low.SourceId], mismatches.Select(mismatch => mismatch.Artifact.SourceId));
+            Assert.All(mismatches, mismatch => Assert.Equal(1.5, mismatch.Deviation, 6));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ReRatingPreservesTheScorePrefixAndUndoRestoresTheOriginalRating()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var archive = new SourceArchive(root);
+            var artifact = archive.Save(new Generation.FlameGenerator().Generate(104), BlankFrame(), 1);
+            var ratings = new RatingStore(root);
+            ratings.Rate(artifact.ImagePath, 2);
+            var scoredPath = PrefixRatedPair(root, 2, artifact.SourceId, 0.6);
+
+            ratings.ReRate(scoredPath, 4);
+
+            var movedPath = Path.Combine(root, "ratings", "4", "060000__" + artifact.SourceId + ".png");
+            Assert.True(File.Exists(movedPath));
+            Assert.True(File.Exists(Path.ChangeExtension(movedPath, ".flame")));
+            Assert.Equal(4, ratings.FindRating(movedPath));
+            Assert.True(ratings.Undo());
+
+            Assert.True(File.Exists(scoredPath));
+            Assert.True(File.Exists(Path.ChangeExtension(scoredPath, ".flame")));
+            Assert.Equal(2, ratings.FindRating(scoredPath));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void RatingDatasetSnapshotParsesPngJpgAndJpegFromTheFiveHumanFolders()
     {
         var root = NewTempDirectory();
@@ -408,6 +461,18 @@ public sealed class PhaseTwoTests
     }
 
     private static RenderedFrame BlankFrame() => new(8, 8, Enumerable.Repeat((byte)255, 8 * 8 * 4).ToArray());
+
+    private static string PrefixRatedPair(string root, int rating, string sourceId, double score)
+    {
+        var directory = Path.Combine(root, "ratings", rating.ToString());
+        var imagePath = Path.Combine(directory, sourceId + ".png");
+        var flamePath = Path.ChangeExtension(imagePath, ".flame");
+        var scoredImagePath = Path.Combine(directory, CandidateFileNaming.WithScorePrefix(Path.GetFileName(imagePath), score));
+        var scoredFlamePath = Path.Combine(directory, CandidateFileNaming.WithScorePrefix(Path.GetFileName(flamePath), score));
+        File.Move(imagePath, scoredImagePath);
+        File.Move(flamePath, scoredFlamePath);
+        return scoredImagePath;
+    }
 
     private static async Task WaitUntil(Func<bool> condition)
     {

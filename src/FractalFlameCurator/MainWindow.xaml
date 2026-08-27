@@ -116,15 +116,24 @@
             <StackPanel>
               <TextBlock Text="DINOv2 ViT-B/14 · frozen backbone · four-threshold ordinal head" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
               <WrapPanel Margin="-2,7,0,5">
-                <Button Content="Start AI scoring" Click="StartAi_Click" />
-                <Button Content="Stop AI scoring" Click="StopAi_Click" />
+                <Button x:Name="StartStopAiButton" Content="Start AI scoring" Click="StartStopAi_Click" ToolTip="Start or stop scoring rendered candidates" AutomationProperties.HelpText="Start or stop AI scoring for rendered candidates" />
                 <Button x:Name="TrainModelButton" Content="Train Model" Click="TrainModel_Click" />
-                <Button x:Name="RescoreRatedDatasetButton" Content="Rescore rated" Click="RescoreRatedDataset_Click" ToolTip="Score all PNG, JPG, and JPEG images in ratings/1–5 and update their score prefixes without changing rating folders" />
               </WrapPanel>
               <TextBlock x:Name="TrainingDatasetPathTextBlock" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="2,0,2,4" ToolTip="The Train Model button reads rated images from this directory." />
               <TextBlock x:Name="TrainingWarningTextBlock" Foreground="#F4B860" TextWrapping="Wrap" />
               <TextBlock x:Name="AiStatusTextBlock" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
               <TextBlock x:Name="TrainingMetricsTextBlock" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Expander>
+
+          <Expander Header="Rating adjustment" IsExpanded="False" Margin="0,0,0,6">
+            <StackPanel>
+              <TextBlock Text="Review complete rated flame pairs whose hidden AI prediction falls outside the range for their current star folder. Highest mismatches appear first." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+              <WrapPanel Margin="-2,7,0,5">
+                <Button x:Name="StartStopRatingAdjustmentButton" Content="Review mismatches" Click="StartStopRatingAdjustment_Click" ToolTip="Review the rated flames with the largest hidden AI-rating mismatches" AutomationProperties.HelpText="Start or finish the rating adjustment review" />
+                <Button x:Name="RescoreRatedDatasetButton" Content="Rescore rated" Click="RescoreRatedDataset_Click" ToolTip="Refresh hidden AI predictions for all PNG, JPG, and JPEG images in ratings 1 through 5 without moving them" AutomationProperties.HelpText="Refresh AI predictions for the rated dataset" />
+              </WrapPanel>
+              <TextBlock x:Name="RatingAdjustmentStatusTextBlock" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
             </StackPanel>
           </Expander>
 

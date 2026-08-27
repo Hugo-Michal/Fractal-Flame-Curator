@@ -141,14 +141,37 @@ rank without replacing a different image already being judged.
 ### Optional AI Scoring drawer
 
 The application displays Python, PyTorch, CUDA, GPU, active-device, and model
-diagnostics. Start AI scoring explicitly starts candidate scoring; Train Model
-trains only and never starts scoring or renames rendered candidates. Its button
-becomes Cancel training while training is active. The user starts scoring after
-a successful training run with Start AI scoring. Rated-dataset rescoring stays
-separate. Directly beneath the buttons, the UI displays the exact selected-workspace
+diagnostics. One Start AI scoring / Stop AI scoring toggle explicitly controls
+candidate scoring. Train Model trains only and never starts scoring or renames
+rendered candidates. Its button becomes Cancel training while training is
+active. The user starts scoring after a successful training run with the toggle.
+Directly beneath the buttons, the UI displays the exact selected-workspace
 ratings/1–5 path that Train Model will read. A missing or unsuitable
 Python/CUDA setup disables only AI functions; manual rendering and rating stay
 available.
+
+### Rating adjustment drawer
+
+Rating adjustment contains Rescore rated and Review mismatches. Rescore rated
+updates score prefixes for rated PNG, JPG, and JPEG images without moving them.
+Review mismatches works only with complete rated PNG/.flame pairs that already
+carry a score prefix; legacy image-only dataset entries remain trainable but
+cannot be moved as flame pairs and are not shown.
+
+The review list converts the hidden 0–1 AI score to its expected 1–5-star value
+and orders only predictions outside the current human-rating band, largest
+deviation first. The bands are 1★ = 1.0–1.5, 2★ = 1.5–2.5, 3★ = 2.5–3.5,
+4★ = 3.5–4.5, and 5★ = 4.5–5.0. The review UI never displays an AI score,
+expected rating, or mismatch magnitude; it shows the flame and lets the human
+use the existing 1–5 star buttons or keyboard shortcuts to confirm or move its
+rating. Re-rating moves the matched pair between star folders while preserving
+its hidden score prefix; Undo restores the previous folder and prefix.
+
+Starting a review stops AI scoring first and keeps it stopped until Finish
+review. Training, rated rescoring, and starting AI scoring are unavailable
+during a review; Review mismatches and Rescore rated are unavailable during
+training. Continuous rendering remains available, while bulk re-rendering of
+rated flames is unavailable during review.
 
 ## Manual generation and rendering flow
 
@@ -253,11 +276,11 @@ candidate.
 
 For a new rating, each ratings/N directory contains only matched PNG/.flame
 pairs. The storage layer moves both files through temporary names and rolls the
-pair back if publication fails. Re-rating moves the same pair to the new star
-folder and removes stale duplicate copies. Undo restores it to rendered/ or
-the former star folder. The application can read legacy PNG-, JPG-, or
-JPEG-only rated images for AI dataset compatibility, but it must not create new
-unpaired ratings.
+pair back if publication fails. New manual ratings remove any score prefix.
+Rating-adjustment re-rating moves the same pair to the new star folder while
+preserving its score prefix, and Undo restores the former star folder and
+prefix. The application can read legacy PNG-, JPG-, or JPEG-only rated images
+for AI dataset compatibility, but it must not create new unpaired ratings.
 
 ## Candidate catalog and ordering
 
@@ -309,9 +332,10 @@ features in fixed GPU batches of four and replaces the active model without
 rescoring rendered candidates. Starting a new AI scoring session then rescans
 existing rendered candidates and scores them with that replacement.
 
-Rated-dataset rescoring is deliberately separate: it scores every rated PNG,
-JPG, or JPEG, including legacy image-only entries, and updates score prefixes
-without moving, deleting, or changing the star folders.
+Rated-dataset rescoring is deliberately separate in the Rating adjustment
+drawer: it scores every rated PNG, JPG, or JPEG, including legacy image-only
+entries, and updates score prefixes without moving, deleting, or changing the
+star folders.
 
 ## Reliability and acceptance behavior
 
