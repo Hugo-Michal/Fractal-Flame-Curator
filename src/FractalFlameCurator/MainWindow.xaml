@@ -118,7 +118,7 @@
               <WrapPanel Margin="-2,7,0,5">
                 <Button Content="Start AI scoring" Click="StartAi_Click" />
                 <Button Content="Stop AI scoring" Click="StopAi_Click" />
-                <Button Content="Train Model" Click="TrainModel_Click" />
+                <Button x:Name="TrainModelButton" Content="Train Model" Click="TrainModel_Click" />
                 <Button x:Name="RescoreRatedDatasetButton" Content="Rescore rated" Click="RescoreRatedDataset_Click" ToolTip="Score all PNG, JPG, and JPEG images in ratings/1–5 and update their score prefixes without changing rating folders" />
               </WrapPanel>
               <TextBlock x:Name="TrainingDatasetPathTextBlock" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="2,0,2,4" ToolTip="The Train Model button reads rated images from this directory." />

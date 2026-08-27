@@ -16,33 +16,43 @@ public sealed class CandidateCatalog
             .Where(artifact => !ratedSourceIds.Contains(artifact.SourceId))
             .GroupBy(artifact => artifact.SourceId, StringComparer.OrdinalIgnoreCase)
             .Select(group => group
-                .OrderByDescending(artifact => File.GetLastWriteTimeUtc(artifact.ImagePath))
-                .ThenByDescending(artifact => CandidateFileNaming.TryParseScore(artifact.BaseName, out _))
-                .First())
+                .Skip(1)
+                .Any()
+                    ? group.OrderByDescending(artifact => File.GetLastWriteTimeUtc(artifact.ImagePath))
+                        .ThenByDescending(artifact => CandidateFileNaming.TryParseScore(artifact.BaseName, out _))
+                        .First()
+                    : group.First())
             .ToDictionary(artifact => artifact.SourceId, StringComparer.OrdinalIgnoreCase);
         foreach (var sourceId in _candidates.Keys.Except(current.Keys, StringComparer.OrdinalIgnoreCase).ToArray()) _candidates.Remove(sourceId);
-        foreach (var artifact in current.Values)
-        {
-            var existing = _candidates.GetValueOrDefault(artifact.SourceId);
-            var parsedScore = CandidateFileNaming.TryParseScore(artifact.BaseName, out var score)
-                ? new PreferenceScore(artifact.ImagePath, artifact.SourceId, score, 1 + score * 4, "filename")
-                : existing.Score;
-            _candidates[artifact.SourceId] = (artifact, parsedScore);
-        }
+        foreach (var artifact in current.Values) Upsert(artifact);
     }
 
-    public void RecordScore(PreferenceScore score)
+    public void Upsert(RenderedArtifact artifact)
+    {
+        var existing = _candidates.GetValueOrDefault(artifact.SourceId);
+        var parsedScore = CandidateFileNaming.TryParseScore(artifact.BaseName, out var score)
+            ? new PreferenceScore(artifact.ImagePath, artifact.SourceId, score, 1 + score * 4, "filename")
+            : existing.Score;
+        _candidates[artifact.SourceId] = (artifact, parsedScore);
+    }
+
+    public bool Remove(string sourceId) => _candidates.Remove(sourceId);
+
+    public RenderedArtifact? RecordScore(PreferenceScore score)
     {
         var sourceId = score.SourceId;
-        if (_candidates.TryGetValue(sourceId, out var candidate))
+        if (!_candidates.TryGetValue(sourceId, out var candidate)) return null;
+
+        var directory = Path.GetDirectoryName(score.ImagePath) ?? string.Empty;
+        var flameFileName = CandidateFileNaming.WithScorePrefix(Path.GetFileName(candidate.Artifact.FlamePath), score.Score);
+        var artifact = candidate.Artifact with
         {
-            var artifact = candidate.Artifact with
-            {
-                BaseName = Path.GetFileNameWithoutExtension(score.ImagePath),
-                ImagePath = score.ImagePath
-            };
-            _candidates[sourceId] = (artifact, score);
-        }
+            BaseName = Path.GetFileNameWithoutExtension(score.ImagePath),
+            ImagePath = score.ImagePath,
+            FlamePath = Path.Combine(directory, flameFileName)
+        };
+        _candidates[sourceId] = (artifact, score);
+        return artifact;
     }
 
     public void ClearScore(string sourceId)
@@ -56,7 +66,9 @@ public sealed class CandidateCatalog
     {
         var values = _candidates.Values;
         return (aiEnabled
-            ? values.OrderByDescending(value => value.Artifact.SourceId, StringComparer.OrdinalIgnoreCase)
+            ? values.OrderByDescending(value => value.Score is not null)
+                .ThenByDescending(value => value.Score?.Score ?? 0)
+                .ThenByDescending(value => value.Artifact.SourceId, StringComparer.OrdinalIgnoreCase)
             : values.OrderBy(value => value.Artifact.SourceId, StringComparer.OrdinalIgnoreCase))
             .Select(value => value.Artifact)
             .ToArray();

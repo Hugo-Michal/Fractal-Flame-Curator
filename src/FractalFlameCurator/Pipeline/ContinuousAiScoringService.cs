@@ -20,6 +20,7 @@ public sealed record AiScoringStatus(
 
 public sealed class ContinuousAiScoringService : IAsyncDisposable
 {
+    private const int ScoringBatchSize = 4;
     private readonly IPreferenceScoringBackend _backend;
     private readonly object _gate = new();
     private readonly ConcurrentDictionary<string, PreferenceScore> _scores = new(StringComparer.OrdinalIgnoreCase);
@@ -65,6 +66,7 @@ public sealed class ContinuousAiScoringService : IAsyncDisposable
     {
         lock (_gate)
         {
+            if (_training) throw new InvalidOperationException("Wait for model training to finish before starting AI scoring.");
             if (_cancellation is not null) throw new InvalidOperationException("AI scoring is already running.");
             if (!_backend.Diagnostics.AiReady) throw new InvalidOperationException("AI scoring is disabled. CUDA and a usable PyTorch DINOv2 runtime are required.");
             _renderedDirectory = Path.Combine(Path.GetFullPath(outputDirectory), "rendered");
@@ -142,6 +144,7 @@ public sealed class ContinuousAiScoringService : IAsyncDisposable
     public async Task<TrainingResult> TrainAsync(DatasetSnapshot snapshot, string modelDirectory, CancellationToken cancellationToken = default)
     {
         if (!_backend.Diagnostics.AiReady) throw new InvalidOperationException("AI training is disabled. CUDA and a usable PyTorch DINOv2 runtime are required.");
+        await StopAsync();
         _training = true;
         await _inferenceGate.WaitAsync(cancellationToken);
         TrainingResult result;
@@ -162,26 +165,10 @@ public sealed class ContinuousAiScoringService : IAsyncDisposable
         {
             _modelVersion = result.ModelVersion;
             _scores.Clear();
-            await RescoreExistingAsync(cancellationToken);
             TrainingCompleted?.Invoke(result);
             return result;
         }
         finally { _training = false; }
-    }
-
-    public async Task RescoreExistingAsync(CancellationToken cancellationToken = default)
-    {
-        if (_ratings is null || string.IsNullOrWhiteSpace(_renderedDirectory)) return;
-        var ratedSourceIds = _ratings.EnumerateRatedImagePaths()
-            .Select(path => CandidateFileNaming.GetSourceId(Path.GetFileName(path)))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var paths = Directory.EnumerateFiles(_renderedDirectory, "*.png", SearchOption.TopDirectoryOnly)
-            .Where(SourceArchive.IsCompleteCandidate)
-            .Where(path => !ratedSourceIds.Contains(CandidateFileNaming.GetSourceId(Path.GetFileName(path))))
-            .ToArray();
-        if (paths.Length == 0) return;
-        Interlocked.Add(ref _total, paths.Length);
-        await ScorePathsAsync(paths, cancellationToken);
     }
 
     public async Task<int> RescoreRatedAsync(RatingStore ratings, CancellationToken cancellationToken = default)
@@ -218,19 +205,32 @@ public sealed class ContinuousAiScoringService : IAsyncDisposable
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            string path;
-            try { path = await _pending!.Reader.ReadAsync(cancellationToken); }
+            var paths = new List<string>(ScoringBatchSize);
+            try { paths.Add(await _pending!.Reader.ReadAsync(cancellationToken)); }
             catch (ChannelClosedException) { return; }
             catch (OperationCanceledException) { return; }
             Interlocked.Decrement(ref _pendingCount);
+            while (paths.Count < ScoringBatchSize && _pending.Reader.TryRead(out var path))
+            {
+                paths.Add(path);
+                Interlocked.Decrement(ref _pendingCount);
+            }
             try
             {
                 await WaitIfPaused(cancellationToken);
-                await WaitForCompleteCandidateAsync(path, cancellationToken);
-                await ScorePathsAsync([path], cancellationToken);
+                var readyPaths = new List<string>(paths.Count);
+                foreach (var path in paths)
+                {
+                    try
+                    {
+                        await WaitForCompleteCandidateAsync(path, cancellationToken);
+                        readyPaths.Add(path);
+                    }
+                    catch (FileNotFoundException) { }
+                }
+                if (readyPaths.Count > 0) await ScorePathsAsync(readyPaths, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-            catch (FileNotFoundException) { }
             catch (Exception exception)
             {
                 Interlocked.Increment(ref _failed);
@@ -255,23 +255,26 @@ public sealed class ContinuousAiScoringService : IAsyncDisposable
 
     private async Task ScorePathsAsync(IReadOnlyList<string> paths, CancellationToken cancellationToken, bool allowUnpairedImages = false)
     {
-        await _inferenceGate.WaitAsync(cancellationToken);
-        try
+        var existing = paths.Where(path => allowUnpairedImages ? File.Exists(path) : SourceArchive.IsCompleteCandidate(path)).ToArray();
+        foreach (var batch in existing.Chunk(ScoringBatchSize))
         {
-            var existing = paths.Where(path => allowUnpairedImages ? File.Exists(path) : SourceArchive.IsCompleteCandidate(path)).ToArray();
-            if (existing.Length == 0) return;
-            var scores = await _backend.ScoreAsync(existing, cancellationToken);
-            foreach (var score in scores)
+            cancellationToken.ThrowIfCancellationRequested();
+            await _inferenceGate.WaitAsync(cancellationToken);
+            try
             {
-                var renamedPath = RenameScoredPair(score.ImagePath, score.Score, allowUnpairedImages);
-                var finalScore = score with { ImagePath = renamedPath };
-                _scores[finalScore.SourceId] = finalScore;
-                lock (_knownSourceIds) _knownSourceIds.Add(finalScore.SourceId);
-                Interlocked.Increment(ref _completed);
-                ImageScored?.Invoke(finalScore);
+                var scores = await _backend.ScoreAsync(batch, cancellationToken);
+                foreach (var score in scores)
+                {
+                    var renamedPath = RenameScoredPair(score.ImagePath, score.Score, allowUnpairedImages);
+                    var finalScore = score with { ImagePath = renamedPath };
+                    _scores[finalScore.SourceId] = finalScore;
+                    lock (_knownSourceIds) _knownSourceIds.Add(finalScore.SourceId);
+                    Interlocked.Increment(ref _completed);
+                    ImageScored?.Invoke(finalScore);
+                }
             }
+            finally { _inferenceGate.Release(); }
         }
-        finally { _inferenceGate.Release(); }
     }
 
     private void EnqueueIfCandidate(string path)

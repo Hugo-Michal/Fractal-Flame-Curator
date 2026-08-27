@@ -50,6 +50,8 @@ public partial class MainWindow : Window
     private Task? _activeRatedRerender;
     private CancellationTokenSource? _ratedRescoreCancellation;
     private Task? _activeRatedRescore;
+    private CancellationTokenSource? _trainingCancellation;
+    private Task? _activeTraining;
     private readonly DispatcherTimer _statusTimer;
 
     public MainWindow()
@@ -96,13 +98,16 @@ public partial class MainWindow : Window
     {
         try
         {
-            EnsureWorkspace();
+            IsEnabled = false;
+            EnsureWorkspace(refreshCandidates: false);
+            await RefreshCandidatesAsync();
             if (_catalog.FirstUnseen(_aiEnabled, GetSeenSourceIds()) is { } candidate) ShowArtifact(candidate);
         }
         catch (Exception exception)
         {
             CurrentTextBlock.Text = $"Could not load rendered candidates: {exception.Message}";
         }
+        finally { IsEnabled = true; }
 
         try
         {
@@ -214,7 +219,6 @@ public partial class MainWindow : Window
             await _artifactRerenderer.RerenderAsync(artifact, palette, settings, progress, cancellation.Token);
             await _aiService.InvalidateAsync(artifact.SourceId);
             _catalog.ClearScore(artifact.SourceId);
-            RefreshCandidates();
             ShowArtifact(artifact);
             ImageSettingsStatusTextBlock.Text = "Current viewport updated. The source .flame file was preserved.";
         }
@@ -363,7 +367,6 @@ public partial class MainWindow : Window
             EnsureWorkspace();
             _aiService.Start(OutputDirectoryTextBox.Text.Trim(), _ratingStore!);
             _aiEnabled = true;
-            RefreshCandidates();
             ShowNextReady();
         }
         catch (Exception exception) { WpfMessageBox.Show(this, exception.Message, "Could not start AI scoring", MessageBoxButton.OK, MessageBoxImage.Warning); }
@@ -430,18 +433,38 @@ public partial class MainWindow : Window
 
     private async void TrainModel_Click(object sender, RoutedEventArgs e)
     {
+        if (_activeTraining is not null)
+        {
+            _trainingCancellation?.Cancel();
+            return;
+        }
+
         try
         {
             EnsureWorkspace();
             var snapshot = PreferenceDatasetBuilder.Snapshot(OutputDirectoryTextBox.Text.Trim());
             UpdateDatasetStatistics(snapshot.Statistics);
-            if (!_aiService.Status.IsRunning) _aiService.Start(OutputDirectoryTextBox.Text.Trim(), _ratingStore!);
-            _aiEnabled = true;
-            TrainingMetricsTextBlock.Text = "Training on the frozen DINOv2 backbone… rendering remains operational.";
-            var training = await _aiService.TrainAsync(snapshot, _aiBackend.ModelDirectory);
+            using var cancellation = new CancellationTokenSource();
+            _trainingCancellation = cancellation;
+            TrainModelButton.Content = "Cancel training";
+            _aiEnabled = false;
+            TrainingMetricsTextBlock.Text = $"Training from {snapshot.Statistics.Total} rated image(s)… rendered candidates will not be scored until Start AI scoring is clicked.";
+            var trainingTask = _aiService.TrainAsync(snapshot, _aiBackend.ModelDirectory, cancellation.Token);
+            _activeTraining = trainingTask;
+            var training = await trainingTask;
             UpdateTrainingMetrics(training);
         }
+        catch (OperationCanceledException) when (_trainingCancellation?.IsCancellationRequested == true)
+        {
+            TrainingMetricsTextBlock.Text = "Training cancelled. Rendered candidates were not scored.";
+        }
         catch (Exception exception) { WpfMessageBox.Show(this, exception.Message, "Could not train preference model", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally
+        {
+            _trainingCancellation = null;
+            _activeTraining = null;
+            TrainModelButton.Content = "Train Model";
+        }
     }
 
     private void RenderService_ImageReady(RenderedArtifact artifact)
@@ -449,7 +472,7 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             while (_renderService.TryDequeueReady(out _)) { }
-            RefreshCandidates();
+            _catalog.Upsert(artifact);
             if (_current is null) ShowNextReady();
         });
     }
@@ -460,11 +483,10 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            _catalog.RecordScore(score);
-            if (_current is not null && string.Equals(_current.SourceId, score.SourceId, StringComparison.OrdinalIgnoreCase))
+            var scoredArtifact = _catalog.RecordScore(score);
+            if (scoredArtifact is not null && _current is not null && string.Equals(_current.SourceId, score.SourceId, StringComparison.OrdinalIgnoreCase))
             {
-                _current = _current with { BaseName = Path.GetFileNameWithoutExtension(score.ImagePath), ImagePath = score.ImagePath };
-                ShowArtifact(_current);
+                ShowArtifact(scoredArtifact);
             }
             else if (_current is null) ShowNextReady();
         });
@@ -502,9 +524,8 @@ public partial class MainWindow : Window
 
     private void ShowNextReady()
     {
-        RefreshCandidates();
         var seenSourceIds = GetSeenSourceIds();
-        var next = _current is null
+        var next = _aiEnabled || _current is null
             ? _catalog.FirstUnseen(_aiEnabled, seenSourceIds)
             : _catalog.NextUnseen(_current.SourceId, _aiEnabled, seenSourceIds);
         if (_deferredAfterUndo is { } deferred)
@@ -524,7 +545,6 @@ public partial class MainWindow : Window
 
     private void Previous_Click(object sender, RoutedEventArgs e)
     {
-        RefreshCandidates();
         if (_current is not null && _catalog.Adjacent(_current.SourceId, -1, _aiEnabled) is { } previous) ShowArtifact(previous);
     }
 
@@ -539,6 +559,7 @@ public partial class MainWindow : Window
             var current = ResolveCurrentArtifact();
             _ratingStore.Rate(current.ImagePath, rating, CopyRatedFilesCheckBox.IsChecked == true);
             _lastRated = current;
+            _catalog.Remove(current.SourceId);
             RefreshWorkspaceStatistics();
             ShowNextReady();
         }
@@ -551,6 +572,7 @@ public partial class MainWindow : Window
     {
         if (_lastRated is null || _ratingStore?.Undo() != true) return;
         _deferredAfterUndo = _current;
+        _catalog.Upsert(_lastRated);
         ShowArtifact(_lastRated);
         _lastRated = null;
         RefreshWorkspaceStatistics();
@@ -665,7 +687,8 @@ public partial class MainWindow : Window
         var sampleProgress = status.ActiveSampleBudget > 0 ? $" · samples {status.ActiveSamples:N0}/{status.ActiveSampleBudget:N0}" : string.Empty;
         SessionTextBlock.Text = status.IsRunning ? $"Session: {(status.IsPaused ? "PAUSED" : "RUNNING")} · {status.Elapsed:hh\\:mm\\:ss} · limit {status.BatchLimit}{sampleProgress}" : "Session: idle";
         var ai = _aiService.Status;
-        AiStatusTextBlock.Text = $"AI: {(ai.IsRunning ? (ai.IsPaused ? "PAUSED" : "RUNNING") : "idle")} · pending {ai.PendingImages} · scored {ai.ScoredImages} · failures {ai.Failed} · progress {ai.Completed}/{ai.Total}\nModel: {ai.ModelVersion ?? "not trained"} · device {ai.Diagnostics.ActiveDevice}";
+        var aiState = ai.IsTraining ? "TRAINING" : ai.IsRunning ? (ai.IsPaused ? "PAUSED" : "RUNNING") : "idle";
+        AiStatusTextBlock.Text = $"AI: {aiState} · pending {ai.PendingImages} · scored {ai.ScoredImages} · failures {ai.Failed} · progress {ai.Completed}/{ai.Total}\nModel: {ai.ModelVersion ?? "not trained"} · device {ai.Diagnostics.ActiveDevice}";
     }
 
     private async void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -679,6 +702,7 @@ public partial class MainWindow : Window
         _rerenderCancellation?.Cancel();
         _ratedRerenderCancellation?.Cancel();
         _ratedRescoreCancellation?.Cancel();
+        _trainingCancellation?.Cancel();
         if (_activeRerender is not null)
         {
             try { await _activeRerender; } catch (Exception) { }
@@ -691,21 +715,26 @@ public partial class MainWindow : Window
         {
             try { await _activeRatedRescore; } catch (Exception) { }
         }
+        if (_activeTraining is not null)
+        {
+            try { await _activeTraining; } catch (Exception) { }
+        }
         await _renderService.DisposeAsync();
         await _aiService.DisposeAsync();
         Close();
     }
 
-    private void EnsureWorkspace()
+    private void EnsureWorkspace(bool refreshCandidates = true)
     {
         var output = Path.GetFullPath(OutputDirectoryTextBox.Text.Trim());
         _workspacePreferenceStore.Save(output);
-        if (_archive is null || _ratingStore is null || !string.Equals(_archive.RootDirectory, output, StringComparison.OrdinalIgnoreCase))
+        var workspaceChanged = _archive is null || _ratingStore is null || !string.Equals(_archive.RootDirectory, output, StringComparison.OrdinalIgnoreCase);
+        if (workspaceChanged)
         {
             _archive = new SourceArchive(output);
             _ratingStore = new RatingStore(output);
         }
-        RefreshCandidates();
+        if (refreshCandidates && workspaceChanged) RefreshCandidates();
         RefreshWorkspaceStatistics();
     }
 
@@ -713,6 +742,14 @@ public partial class MainWindow : Window
     {
         if (_archive is null || _ratingStore is null) return;
         _catalog.Refresh(_archive, _ratingStore);
+    }
+
+    private async Task RefreshCandidatesAsync()
+    {
+        var archive = _archive;
+        var ratings = _ratingStore;
+        if (archive is null || ratings is null) return;
+        await Task.Run(() => _catalog.Refresh(archive, ratings));
     }
 
     private HashSet<string> GetSeenSourceIds()
