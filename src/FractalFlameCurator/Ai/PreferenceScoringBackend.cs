@@ -55,6 +55,7 @@ public sealed class DinoV2PreferenceBackend : IPreferenceScoringBackend
     {
         if (!_diagnostics.AiReady) throw new InvalidOperationException("AI scoring is disabled because CUDA and a usable PyTorch DINOv2 runtime are unavailable.");
         var response = await SendAsync<DinoScoreResponse>(new { command = "score", paths = imagePaths, model_directory = _options.ModelDirectory }, cancellationToken);
+        _activeModelVersion = response.ModelVersion;
         return response.Scores.Select(score => new PreferenceScore(score.Path, CandidateFileNaming.GetSourceId(Path.GetFileName(score.Path)), Math.Clamp(score.Score, 0, 1), Math.Clamp(score.ExpectedRating, 1, 5), response.ModelVersion)).ToArray();
     }
 
@@ -113,6 +114,11 @@ public sealed class DinoV2PreferenceBackend : IPreferenceScoringBackend
             if (!string.IsNullOrWhiteSpace(error?.Error)) throw new InvalidOperationException(error.Error);
             return JsonSerializer.Deserialize<T>(line, _jsonOptions) ?? throw new JsonException("The DINOv2 worker returned an empty response.");
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            StopWorker();
+            throw;
+        }
         finally { _ioGate.Release(); }
     }
 
@@ -142,6 +148,18 @@ public sealed class DinoV2PreferenceBackend : IPreferenceScoringBackend
         _ = DrainErrorsAsync(_process.StandardError);
         await Task.Yield();
         cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private void StopWorker()
+    {
+        if (_process is { HasExited: false })
+        {
+            try { _process.Kill(true); } catch (InvalidOperationException) { }
+        }
+        _process?.Dispose();
+        _process = null;
+        _input = null;
+        _output = null;
     }
 
     private static object ToRequestImage(DatasetImage image) => new { path = image.ImagePath, rating = image.Rating, source_id = image.SourceId };

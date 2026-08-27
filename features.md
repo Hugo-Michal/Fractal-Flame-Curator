@@ -133,11 +133,19 @@ ratings, Left/Right Arrow for previous/next, U for undo, P for pause/resume,
 and Escape to stop rendering. Shortcuts do not apply while an editable text
 field has focus, so text and numeric values can be entered normally.
 
+While AI scoring is enabled, Next selects the highest-scored unseen candidate.
+Candidates without an AI score follow scored candidates and retain descending
+source-ID order. A newly received AI score updates the candidate's paths and
+rank without replacing a different image already being judged.
+
 ### Optional AI Scoring drawer
 
 The application displays Python, PyTorch, CUDA, GPU, active-device, and model
-diagnostics. Buttons start/stop scoring, train a model, and rescore the rated
-dataset. Directly beneath them, the UI displays the exact selected-workspace
+diagnostics. Start AI scoring explicitly starts candidate scoring; Train Model
+trains only and never starts scoring or renames rendered candidates. Its button
+becomes Cancel training while training is active. The user starts scoring after
+a successful training run with Start AI scoring. Rated-dataset rescoring stays
+separate. Directly beneath the buttons, the UI displays the exact selected-workspace
 ratings/1–5 path that Train Model will read. A missing or unsuitable
 Python/CUDA setup disables only AI functions; manual rendering and rating stay
 available.
@@ -255,9 +263,13 @@ unpaired ratings.
 
 CandidateCatalog excludes source IDs already present in a rating folder. It
 groups duplicate legacy IDs and picks the most recently written complete pair
-deterministically. With AI disabled, candidates are ordered by source ID in
-ascending order. With AI enabled, they are ordered by source ID in descending
-order; stored AI scores remain visible but do not change the viewport order.
+deterministically. It builds from one background metadata scan when the
+workspace opens, then keeps the session catalog current from known render,
+rating, undo, and AI-score events. With AI disabled, candidates are ordered by
+source ID in ascending order. With AI enabled, scored candidates are ordered by
+score descending and source ID descending for ties; unscored candidates follow
+in source-ID-descending order. Score-prefixed file names are persistence
+metadata, while the stable source ID remains the catalog identity.
 
 ## AI preference scoring
 
@@ -276,10 +288,12 @@ continuous score is:
 (expected rating - 1) / 4
 ~~~
 
-Scores range from zero to one. The service watches rendered complete pairs and
-also performs a low-frequency fallback scan. It prefixes the rendered PNG and
-matching .flame with the fixed-width score, then stores the score in the
-catalog. Low scores are retained; AI does not discard candidates.
+Scores range from zero to one. When the user starts AI scoring, the service
+watches rendered complete pairs and also performs a low-frequency fallback
+scan. It scores and publishes candidates in fixed batches of four so GPU memory
+use remains bounded and each finished batch promptly prefixes the rendered PNG
+and matching .flame with the fixed-width score before updating the catalog. Low
+scores are retained; AI does not discard candidates.
 
 Training snapshots only ratings/1 through ratings/5. It groups images by stable
 source ID before assigning deterministic train, validation, and test splits to
@@ -290,9 +304,10 @@ metrics are explicitly unreliable.
 
 Controls are PNG files under controls/<name>/. They are evaluated only and
 never added to human labels. Trained heads are stored under
-LocalAppData/FractalFlameCurator/models. Starting a new AI session rescans
-existing rendered candidates; retraining replaces the active model and
-rescoring uses the replacement.
+LocalAppData/FractalFlameCurator/models. Training extracts frozen DINOv2
+features in fixed GPU batches of four and replaces the active model without
+rescoring rendered candidates. Starting a new AI scoring session then rescans
+existing rendered candidates and scores them with that replacement.
 
 Rated-dataset rescoring is deliberately separate: it scores every rated PNG,
 JPG, or JPEG, including legacy image-only entries, and updates score prefixes
