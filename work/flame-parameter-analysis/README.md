@@ -8,9 +8,15 @@ and produces CSV data plus a self-contained HTML report.
 
 The tool does not modify, rename, move, rate, or score source files.
 
+When a configuration supplies `generator_profile_path`, the analyzer reads the
+settings snapshot written by that render session and uses it as the expected
+reference profile. Duplicate values in `expected_generator` must match the
+recorded profile; that block is reserved for additional known sampling rules
+such as the fixed symmetry chance and orders.
+
 ## Control-focused scope
 
-`parameter-selection.md` maps the 185 extracted marginal parameters to the
+`parameter-selection.md` maps the extracted generator-facing parameters to the
 user-visible random-generator controls. It identifies the canonical pooled
 parameter for each control, distinguishes a user-editable setting from a
 hard-coded sampling rule, excludes static/render-only fields from the focused
@@ -18,39 +24,46 @@ preset, and predeclares three primary article measures: transform count,
 variation-type occurrence, and affine scale.
 
 This document is the decision table to update before a new automatic-preset
-policy is implemented. It does not change the raw matrix: excluded fields stay
-available for auditability and later joint-distribution work.
+policy is implemented. Fixed fields excluded from the focused scope are not
+parsed; the source files remain untouched for any future independent audit.
 
-`variation-weight-sampling-design.md` contains the proposed replacement for
+`variation-weight-sampling-design.md` documents the implemented replacement for
 the normalized raw-weight sampler: a seed-scrambled, low-discrepancy simplex
-coverage sampler for broad relative variation-weight coverage. It is a design
-document only; the current generator remains unchanged until the proposal is
-approved and implemented.
+coverage sampler for broad relative variation-weight coverage. The analyzer
+validates this sampler conditionally by variation count rather than treating
+pooled component histograms as independent uniform variables.
 
-## Run Pass 1
+## Run Pass 2 with rating folders separated
 
 From the repository root:
 
 ```powershell
-py -3.12 .\work\flame-parameter-analysis\analyze_flames.py `
-  .\work\flame-parameter-analysis\pass-01.json
+$py = 'C:\\Users\\Hugo\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe'
+& $py .\work\flame-parameter-analysis\analyze_flames.py `
+  .\work\flame-parameter-analysis\pass-02-human-ratings.json
 ```
 
-The current Pass 1 configuration keeps cohorts separate:
+The Pass 2 configuration keeps the cohorts separate:
 
-- `reference_pass_01`: all 10,000 sources from run `62b27347`, reconstructed
-  from the union of `rendered` and `ratings/1` so later rating moves do not
-  remove selected flames from the original random reference population;
-- `negative_pass_01`: any one-star sources from that same run; and
-- rating folders 2 through 5 are inventoried without attempting to parse
-  image-only files as flame genomes.
+- `reference_pass_01_v13`: all 24,000 sources from run `001e81a2`, reconstructed
+  from the current `rendered` folder plus the 500 rated flame pairs so later
+  rating moves do not remove selected flames from the random reference
+  population;
+- `rating_1_pass_02` through `rating_4_pass_02`: the complete flame pairs in
+  each human-rating folder; and
+- rating folder 5 is inventoried without attempting to parse its image-only
+  seashell references as flame genomes.
 
-The reference group has an enforced expected count of 10,000. A missing,
+The reference and rating groups have enforced expected counts of 24,000, 364,
+87, 44, and 5. A missing,
 malformed, duplicated, or incorrectly filtered source therefore fails the run
 instead of silently changing the baseline. All groups and filters are
-configurable in JSON. Copy `config.example.json` for subsequent passes, give
-each output directory a stable pass name, and keep the reference group
-unchanged when comparing convergence across passes.
+configurable in JSON. `report_groups` controls which cohorts are initially
+shown; every analytical cohort is still embedded in the report. Checkboxes plus
+reference-only, ratings-only, and select-all shortcuts update graphs and cohort
+table rows without rerunning the analysis. Copy `config.example.json`
+for subsequent passes, give each output directory a stable pass name, and keep
+the reference group unchanged when comparing convergence across passes.
 
 ## Outputs
 
@@ -67,6 +80,11 @@ Each run creates these files under its configured output directory:
 | `numeric_histograms.csv` | Normalized histogram-bin probabilities for continuous and count parameters. |
 | `categorical_probabilities.csv` | Exact empirical probabilities for categorical, checkbox, and presence parameters. |
 | `distribution_profiles.json` | Machine-readable per-group histogram/category profiles intended as input evidence for later generator-profile design. |
+| `variation_occurrence.csv` | Per-cohort occurrence rate for every supported variation, measured over base transforms, with reference differences and ratios. |
+| `variation_weight_vectors.csv` | Per-transform normalized weight vectors with matching variation names and variation-count labels for reproducible simplex analysis. |
+| `variation_weight_by_name.csv` | Conditional weight quantiles for each variation name and cohort. |
+| `generator_control_findings.csv` | Plain-language, sample-guarded screening guidance mapped to controls in the random-generator window. |
+| `simplex_coverage.csv` | Conditional weight-floor, sum-invariant, two-part KS, and three-part triangular-occupancy diagnostics. |
 | `uniformity_tests.csv` | Reference goodness-of-fit tests against the expected generator configuration. |
 | `concentration_comparisons.csv` | Target-versus-reference distribution shifts and narrowing measures. |
 | `report.html` | Self-contained visual report with cohort inventory, uniformity checks, concentration ranking, and graphs for every analyzed marginal. |
@@ -89,9 +107,12 @@ translation = (e, f)
 ```
 
 It performs the equivalent reconstruction for post transforms. It also records
-transform count, transform weights, variation count, variation type presence,
-conditional variation weights, final-transform presence, flame symmetry,
-camera/render/tone values, and palette summaries.
+transform count, transform weights, variation count, aggregate variation-name
+occurrence, conditional variation-weight vectors with their names,
+final-transform presence, flame symmetry, and
+post-transform settings. Fixed camera, render, tone, background, and palette
+fields are intentionally not parsed because they do not vary in the generator
+experiment.
 
 The matrix retains transform-indexed values. Statistical summaries additionally
 pool equivalent transform positions as `xform[*]...`, which is usually the
@@ -102,8 +123,9 @@ correct level for configuring generator distributions.
 - Continuous parameters use normalized histograms with deterministic
   Freedman–Diaconis bin selection, bounded by the configured minimum and maximum
   bin counts.
-- Transform and variation counts, checkboxes, and presence flags use exact category
-  probabilities.
+- Transform and variation counts and generator checkboxes use exact category
+  probabilities. Variation names are summarized as one occurrence distribution;
+  per-variation Boolean parameters are not created.
 - Rotation parameters retain histograms but use circular means and circular
   variance for concentration, avoiding a false wide spread when values cluster
   across the -180/180-degree boundary.
@@ -120,6 +142,12 @@ correct level for configuring generator distributions.
   observations by default. Configure these thresholds under `comparison`.
   Smaller conditional samples remain in the CSV, but they are excluded from
   the ranking to prevent rare variation types from dominating through noise.
+- Variation-weight distributions are conditional on selected variation count
+  and are displayed in separate one-, two-, and three-variation report tabs:
+  one-part vectors are checked for exact weight one, two-part vectors use a
+  pooled component histogram and a uniform-share KS test, and three-part
+  vectors use triangular-cell occupancy plus the ternary plot. No isolated
+  three-part component histogram is interpreted as uniform.
 - A positive concentration score means a marginal became narrower. It does not
   mean the selected flames are better or that the generator should immediately
   adopt the narrowed range.

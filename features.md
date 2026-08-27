@@ -31,18 +31,27 @@ The repository includes a separate, read-only research tool under
 not alter, rename, move, rate, or score workspace files.
 
 The tool accepts a JSON configuration containing named source folders, optional
-run-ID or source-ID filters, a reference group, comparison groups, histogram
-limits, sample-size guardrails, and the expected random-generator profile.
+run-ID or source-ID filters, a reference group, comparison groups, an optional
+initial `report_groups` selection, histogram limits, sample-size guardrails,
+and the expected random-generator profile. When `generator_profile_path` is
+supplied, its recorded session settings are authoritative; overlapping manual
+expectations must match, while manual values may add hard-coded sampling rules
+that the session profile does not store.
 Image-only folders may be inventoried without attempting genome analysis. Each
 execution writes a conventional flame-by-parameter CSV matrix, the requested
 transposed parameter-by-flame matrix, source manifest, folder inventory,
 parameter catalog, marginal summaries, numeric histogram probabilities,
 categorical probabilities, generator goodness-of-fit tests, concentration
-comparisons, complete per-transform variation-weight vectors, a machine-readable
-run summary, and a self-contained HTML visual report. Variation-weight
-summaries are conditional on variation count; the report tests two-part
-mixtures across their configured interval and plots three-part mixtures on a
-ternary simplex instead of expecting each component histogram to be flat.
+comparisons, complete per-transform variation-weight vectors, variation
+occurrence and named-weight evidence, generator-control screening guidance, a
+machine-readable run summary, and a self-contained HTML visual report. Variation-weight views
+are separated into one-, two-, and three-variation tabs; the report tests
+two-part mixtures across their configured interval and plots three-part
+mixtures on a ternary simplex instead of expecting each component histogram to
+be flat. The HTML report includes a cohort configurator. Every analyzed cohort
+is embedded in every applicable graph and cohort table; checkboxes and
+reference/rating shortcuts change the visible comparison without rerunning or
+changing the underlying analysis.
 
 Continuous parameters use deterministic bounded histograms; categorical and
 checkbox parameters use exact empirical probabilities. The tool reconstructs
@@ -55,16 +64,16 @@ Most evidence is marginal and univariate; complete variation-weight vectors
 and the three-part simplex diagnostic are retained for the relevant joint
 analysis, while the raw matrix supports later multivariate work.
 
-The statistical layer includes only parameters mapped to a user-configurable
+The main statistical layer includes only parameters mapped to a user-configurable
 random-generator control. Hardcoded camera and transform constants, serialized
 affine coefficients, render/tone/palette settings, and derived values without
-an independent generator control remain available in the raw audit matrix but
-are omitted from summaries, distribution profiles, comparisons, goodness-of-
-fit tests, and report graphs.
-
-Enabled variation types are summarized by one categorical distribution of
-selected variation names. Per-variation true/false presence charts are omitted
-from the report and focused statistics to avoid redundant information.
+an independent generator control are omitted from the analysis matrix and all
+summaries. Variation names are not expanded into per-flame or per-transform
+true/false parameters. Instead, the tool reports one cohort-level occurrence
+distribution over all supported variation types, validates the reference
+choice distribution, and retains weights by name for future profile design.
+Joint variation-weight geometry remains partitioned by transform variation
+count.
 
 ## User interface
 

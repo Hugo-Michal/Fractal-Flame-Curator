@@ -1,6 +1,7 @@
 # System design: coverage-first variation-mixture sampling
 
-**Status:** revised proposal — no generator behavior has been changed.
+**Status:** implemented in v1.3.0; this document records the design rationale
+and the acceptance criteria used by the current generator and analysis tool.
 
 ## Decision being addressed
 
@@ -217,7 +218,7 @@ occurrence analysis must not be conflated with the relative-weight sampler.
 6. Render a new fixed-seed reference batch and compare its coverage with Pass
    1 before using it for DINOv2-guided adaptation.
 
-## Approval requested
+## Historical approval record
 
 Approve or adjust these concrete choices before implementation:
 

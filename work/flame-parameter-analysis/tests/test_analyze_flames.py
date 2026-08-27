@@ -51,7 +51,7 @@ def expected_generator() -> dict:
         "minimum_variation_count": 1,
         "maximum_variation_count": 2,
         "enabled_variations": ["linear", "sinusoidal", "swirl"],
-        "variation_blend_dominance": 0.5,
+        "minimum_variation_share": 0.05,
         "post_transform_chance": 0.42,
         "minimum_post_rotation_degrees": -180.0,
         "maximum_post_rotation_degrees": 180.0,
@@ -64,6 +64,28 @@ def expected_generator() -> dict:
 
 
 class FlameParameterAnalysisTests(unittest.TestCase):
+    def test_recorded_generator_profile_supplies_the_expected_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = expected_generator()
+            settings.pop("symmetry_chance")
+            settings.pop("symmetry_orders")
+            settings["symmetry_types"] = "rotational"
+            profile = root / "generator_profile.json"
+            profile.write_text(json.dumps({"generator_settings": settings}), encoding="utf-8")
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps({
+                "groups": [{"name": "reference", "folders": [str(root)]}],
+                "generator_profile_path": str(profile),
+                "expected_generator": {"symmetry_chance": 0.4, "symmetry_orders": [2, 3]},
+            }), encoding="utf-8")
+
+            config = analysis.load_config(config_path, None)
+
+            self.assertEqual(["rotational"], config["expected_generator"]["symmetry_types"])
+            self.assertEqual(["linear", "sinusoidal", "swirl"], config["expected_generator"]["enabled_variations"])
+            self.assertEqual(0.4, config["expected_generator"]["symmetry_chance"])
+
     def test_reconstructs_generator_facing_affine_values(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "flame_000001_seed_42_run_test.flame"
@@ -79,7 +101,12 @@ class FlameParameterAnalysisTests(unittest.TestCase):
             self.assertAlmostEqual(-45.0, record["xform.01.post.derived.rotation_degrees"], places=8)
             self.assertAlmostEqual(1.2, record["xform.01.post.derived.scale"], places=8)
             self.assertEqual(2, record["genome.transform_count"])
-            self.assertTrue(record["genome.variation.linear.present"])
+            self.assertNotIn("genome.variation.linear.present", record)
+            self.assertNotIn("flame.background.red", record)
+            self.assertNotIn("flame.brightness", record)
+            self.assertNotIn("flame.center.x", record)
+            self.assertNotIn("flame.filter", record)
+            self.assertNotIn("xform.01.affine.a", record)
             self.assertFalse(record["genome.finalxform_present"])
 
     def test_run_writes_auditable_matrices_statistics_and_report(self) -> None:
@@ -113,6 +140,7 @@ class FlameParameterAnalysisTests(unittest.TestCase):
                 ],
                 "reference_group": "reference",
                 "comparison_groups": ["selected"],
+                "report_groups": ["reference", "selected"],
                 "expected_generator": expected_generator(),
             }
             config_path = root / "config.json"
@@ -127,7 +155,10 @@ class FlameParameterAnalysisTests(unittest.TestCase):
                 "folder_inventory.csv", "flame_manifest.csv", "parameter_catalog.csv",
                 "parameter_summary.csv", "numeric_histograms.csv",
                 "categorical_probabilities.csv", "concentration_comparisons.csv",
-                "uniformity_tests.csv", "distribution_profiles.json", "report.html", "run_summary.json",
+                "uniformity_tests.csv", "variation_weight_vectors.csv", "simplex_coverage.csv",
+                "variation_occurrence.csv", "variation_weight_by_name.csv",
+                "generator_control_findings.csv",
+                "distribution_profiles.json", "report.html", "run_summary.json",
             )
             for name in expected_files:
                 self.assertTrue((output / name).is_file(), name)
@@ -137,15 +168,35 @@ class FlameParameterAnalysisTests(unittest.TestCase):
             self.assertEqual(6, len(matrix))
             self.assertIn("xform.01.derived.scale", matrix[0])
 
-            with (output / "categorical_probabilities.csv").open(encoding="utf-8-sig", newline="") as stream:
-                probabilities = list(csv.DictReader(stream))
-            linear_presence = [
-                float(row["probability"])
-                for row in probabilities
-                if row["parameter"] == "xform[*].variation.linear.present"
-                and row["group"] == "reference"
-            ]
-            self.assertAlmostEqual(1.0, sum(linear_presence), places=12)
+            with (output / "variation_weight_vectors.csv").open(encoding="utf-8-sig", newline="") as stream:
+                vectors = list(csv.DictReader(stream))
+            self.assertEqual(12, len(vectors))
+            self.assertEqual("linear", vectors[0]["variation_1"])
+            self.assertTrue(all(abs(sum(float(vectors[row][f"weight_{index}"]) for index in range(1, 6) if vectors[row][f"weight_{index}"]) - 1) < 1e-12 for row in range(len(vectors))))
+            with (output / "variation_occurrence.csv").open(encoding="utf-8-sig", newline="") as stream:
+                occurrence = list(csv.DictReader(stream))
+            linear_reference = next(row for row in occurrence if row["group"] == "reference" and row["variation"] == "linear")
+            self.assertEqual("2", linear_reference["base_transforms_with_variation"])
+            self.assertEqual("8", linear_reference["total_base_transforms"])
+            self.assertAlmostEqual(0.25, float(linear_reference["occurrence_rate_per_transform"]))
+            with (output / "simplex_coverage.csv").open(encoding="utf-8-sig", newline="") as stream:
+                simplex = list(csv.DictReader(stream))
+            self.assertTrue(any(row["variation_count"] == "2" and row["coverage_test"] == "KS uniform first share" for row in simplex))
+            with (output / "uniformity_tests.csv").open(encoding="utf-8-sig", newline="") as stream:
+                uniformity = list(csv.DictReader(stream))
+            self.assertTrue(any(row["parameter"] == "variation occurrence" for row in uniformity))
+
+            with (output / "parameter_summary.csv").open(encoding="utf-8-sig", newline="") as stream:
+                summaries = list(csv.DictReader(stream))
+            analyzed_parameters = {row["parameter"] for row in summaries}
+            self.assertNotIn("xform[*].variation.name", analyzed_parameters)
+            self.assertNotIn("xform[*].variation.linear.present", analyzed_parameters)
+            self.assertNotIn("flame.background.red", analyzed_parameters)
+            self.assertNotIn("flame.brightness", analyzed_parameters)
+            self.assertNotIn("flame.center.x", analyzed_parameters)
+            self.assertNotIn("flame.filter", analyzed_parameters)
+            self.assertNotIn("xform[*].affine.a", analyzed_parameters)
+            self.assertNotIn("genome.post_transform_count", analyzed_parameters)
             profiles = json.loads((output / "distribution_profiles.json").read_text(encoding="utf-8"))
             transform_count = profiles["groups"]["reference"]["parameters"]["genome.transform_count"]
             self.assertEqual("categorical", transform_count["kind"])
@@ -158,7 +209,18 @@ class FlameParameterAnalysisTests(unittest.TestCase):
             ))
             report = (output / "report.html").read_text(encoding="utf-8")
             self.assertIn("Test report", report)
-            self.assertIn("Largest measured concentrations", report)
+            self.assertIn("Generator-control findings", report)
+            self.assertIn("Variation occurrence", report)
+            self.assertIn("1 variation", report)
+            self.assertIn("2 variations", report)
+            self.assertIn("3 variations", report)
+            self.assertIn("report-group-toggle", report)
+            self.assertIn('data-report-group="reference"', report)
+            self.assertIn('data-report-group="selected"', report)
+            self.assertIn("series.style.display", report)
+            self.assertIn("Ratings only", report)
+            self.assertNotIn("variation.linear.present", report)
+            self.assertNotIn("flame.background", report)
 
     def test_entropy_uses_the_full_bin_or_category_support(self) -> None:
         self.assertAlmostEqual(0.5, analysis.normalized_entropy([0.5, 0.5, 0.0, 0.0]))

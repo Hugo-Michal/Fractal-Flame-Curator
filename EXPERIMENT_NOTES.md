@@ -167,3 +167,176 @@ Sources supplied by the researcher:
 - Proposed first floor: `0.05`. This lets two-variation transforms range from near `0.05 / 0.95` to near `0.95 / 0.05`; for three variations it permits mixes near `0.90 / 0.05 / 0.05`.
 - One-variation transforms stay exactly `1.0`, because that is the only valid one-part mixture.
 - The proposal requires sequential genome creation in the bounded render producer, followed by the existing parallel render workers, so coverage counters remain deterministic independent of worker timing.
+
+## 2026-08-26 — Updated v1.3 broad-prior baseline, Pass 2
+
+### Branch and source audit
+
+- The analysis was run from the `research` branch worktree at
+  `C:\Users\Hugo\.codex\worktrees\e856\2026_07_14 Apophysis`. The branch
+  contains the v1.3 deterministic `SpaceFillingSimplexSampler`, recorded
+  generator profiles, and the prescribed `work/flame-parameter-analysis`
+  tool.
+- The user-facing Desktop folder is named `Fractal flame curator - SeaShells`
+  rather than the shorter name used in the request.
+- The rendered folder contains exactly 24,000 non-empty `.flame` files and
+  exactly 24,000 matching non-empty PNGs. All 24,000 belong to session
+  `001e81a2`; the recorded profile is
+  `rendered/generator_profile_run_001e81a2.json`.
+- Rating folders 1 through 4 are empty. Rating folder 5 contains 32 JPG
+  seashell X-ray references. These images are scorer references, not flame
+  genomes, so they cannot enter parameter-space analysis.
+- The v1.3 profile records transform count 2–5, rotational symmetry, affine
+  rotation ±180°, scale 0.35–0.85, shear ±0.25, translation ±0.75, 1–3
+  variations, `minimum_variation_share = 0.05`, 42% post-transform chance,
+  post scale 0.75–1.25, post translation ±0.18, and final transforms disabled.
+
+### Tool correction before accepting the pass
+
+- The branch specification promised conditional simplex diagnostics and
+  complete per-transform weight vectors, but the checked-out analyzer did not
+  emit them. This was a real research-tool mismatch, not a data failure.
+- The analyzer was updated to version 1.1.0 before the final run. It now emits
+  `variation_weight_vectors.csv` and `simplex_coverage.csv`, tests two-part
+  mixtures against the configured interval, and plots three-part mixtures on a
+  ternary simplex. The five analyzer tests pass after the change.
+
+### Pass 2 results
+
+- The final run parsed exactly 24,000 flames, produced 401 matrix parameter
+  columns and 185 analyzed marginals, and reported zero parse warnings,
+  duplicate IDs, or filtered reference records.
+- All 16 configured broad-prior checks were inside their expected ranges and
+  none had a p-value below 0.01 or a practical effect above 0.02. The largest
+  KS deviation was affine rotation, D = 0.0055, p = 0.0122; this is small and
+  not an out-of-range or practical distribution failure.
+- Transform count, symmetry, affine scale/shear/translation, transform
+  weights, variation count/weight geometry, post presence/ranges, and the
+  disabled final-transform state are therefore consistent with the recorded
+  v1.3 profile at this baseline size.
+- The sampler-specific check captured 84,078 base-transform vectors: 28,109
+  one-part, 27,906 two-part, and 28,063 three-part mixtures. One-part weights
+  are exactly 1.0 with no violations. Two-part weights span 0.050002–0.949998,
+  occupy all 18 diagnostic bins, and pass the uniform-share KS check (D =
+  0.0041, p = 0.744). Three-part vectors have zero floor violations, maximum
+  sum error 2.22e-16, and occupy all 55 cells of the 10-bin triangular grid.
+- This is a validated broad prior, not yet a “normal distribution”: the
+  generator intentionally uses discrete uniform choices, continuous uniform
+  ranges, Bernoulli post transforms, and constrained simplex mixtures.
+
+### Planned experimental rounds
+
+1. **Pass 3 — human selection:** manually score approximately 500–1,000
+   rendered flames. Keep the selected source IDs and their matching `.flame`
+   files together. Re-run the same analyzer against that cohort versus this
+   frozen 24,000-flame reference.
+2. **Pass 4 — DINO-assisted selection:** score the complete 24,000-image
+   population with DINOv2, inspect and independently human-check the highest
+   ranked candidates, then analyze the confirmed subset. DINOv2 rank is a
+   prioritization signal, not the sole success measure.
+3. **Pass 5 and later — controlled iteration:** compare user-only and
+   DINO-assisted cohorts with the same primary parameter families (transform
+   count, variation count and conditional weight geometry, affine scale),
+   secondary controls, joint simplex structure, target-style hit rate, and
+   phenotype diversity. Preserve
+   the original broad prior and an exploration reserve; do not infer a new
+   generator mode from a single marginal or an unverified scorer ranking.
+
+The current Pass 2 artifacts are under
+`work/flame-parameter-analysis/outputs/pass-02-v13-baseline`. Future passes
+should use a new output directory and retain this profile as the unchanged
+reference unless the research question explicitly changes.
+
+## 2026-08-26 — Report decluttering and conditional weight views
+
+- Removed per-variation name probabilities and per-variation true/false
+  presence observations from the analyzer, report, focused CSV summaries, and
+  generator goodness-of-fit checks. The raw variation parser still recognizes
+  supported XML attributes so it can form anonymous normalized weight vectors.
+- Removed fixed camera, render, tone, background, filter, brightness, and
+  palette fields from the parameter-analysis matrix and report. These values
+  are not randomized by the generator and do not belong in the style-space
+  comparison.
+- Removed serialized affine coefficient marginals and fixed per-transform
+  color/symmetry fields from the focused matrix/report; generator-facing
+  rotation, scale, shear, and translation are retained as the interpretable
+  derived values.
+- Replaced the single pooled variation-weight view with three report tabs:
+  one-variation exact weight, two-variation pooled component histogram plus
+  uniform-share KS test, and three-variation ternary simplex coverage.
+- Bumped the analyzer to v1.2.0 and updated the focused-scope documentation and
+  tests. The next 24,000-flame baseline rerun must confirm the removed fields
+  are absent and all three tabs are present before it is used as the reference
+  artifact.
+
+## 2026-08-26 — Renamed Pass 1: 500 human-rated flames
+
+- The 500 newly sorted flame pairs are distributed across ratings 1–4:
+  364, 87, 44, and 5 respectively. Rating 5 still contains 32 JPG seashell
+  references rather than `.flame` genomes and remains inventory-only.
+- The renamed Pass 1 configuration is
+  `work/flame-parameter-analysis/pass-01-human-500.json`. It compares the
+  500-flame human cohort with the complete 24,000-flame v1.3 reference,
+  reconstructed from the current rendered folder plus the rated pairs.
+- The run parsed 24,500 records in total with no warnings, producing 64
+  matrix parameter columns, 16 focused marginals, and 85,853 weight vectors.
+  Intentional overlap between the reference population and its 500-flame
+  target is recorded as 500 duplicate source IDs across groups; it is not a
+  parse failure.
+- The strongest concentration signal is base-transform scale
+  (concentration score ≈ 0.0382; target IQR/reference IQR ≈ 0.9618). The
+  report retains all eligible comparisons and the conditional one-, two-, and
+  three-variation weight tabs for the next pass decision.
+
+## 2026-08-27 — Pass 2: rating folders separated
+
+- Naming is now explicit: Pass 1 is the 24,000-flame v1.3 reference; Pass 2 is
+  the first 500 human-sorted images.
+- Pass 2 analyzes the rating folders independently: rating 1 = 364 flames,
+  rating 2 = 87, rating 3 = 44, and rating 4 = 5. The reference still uses
+  the complete 24,000-flame population reconstructed from rendered plus rated
+  pairs. Rating 5 remains image-only seashell references.
+- The new configuration is
+  `work/flame-parameter-analysis/pass-02-human-ratings.json`, with output in
+  `work/flame-parameter-analysis/outputs/pass-02-human-ratings`.
+- The report accepts `report_groups` for the initial graph selection and adds
+  live checkboxes that show or hide cohort series without changing analysis
+  tables or CSV output. The initial view includes the reference and ratings
+  1–4.
+
+## 2026-08-27 — Generator-control report redesign
+
+- The researcher clarified that variation presence means the occurrence rate
+  of each variation type within each cohort, not a separate true/false
+  parameter for every name and flame.
+- The analyzer was audited against the controls actually exposed in the random
+  generator settings window. The redundant `genome.post_transform_count`
+  marginal and unrecognized XML-attribute statistics were removed from the
+  focused analysis; `xform[*].post.present` remains the direct measure for the
+  post-transform chance control.
+- The previously configured session profile path was not being read. The
+  analyzer now treats `generator_profile_run_001e81a2.json` as the authoritative
+  generator settings snapshot and rejects conflicting duplicated expectations;
+  manual expectations add only rules not stored in the profile.
+- Variation names are now retained as one cohort-level occurrence distribution
+  over base transforms. The report and `variation_occurrence.csv` compare exact
+  occurrence rates with the frozen reference, while
+  `variation_weight_by_name.csv` preserves conditional per-type weight evidence
+  for later profile work. No matrix of per-variation Boolean parameters was
+  reintroduced.
+- The cohort configurator failure had two causes: checkbox inputs inherited the
+  full-width search-field style, and cohorts omitted from the initial
+  `report_groups` list were not rendered into charts at all. Every analytical
+  cohort is now embedded; checkboxes plus Select all, Reference only, and
+  Ratings only controls update graph series and cohort table rows using CSS
+  display state.
+- The main report is organized by generator control rather than XML parameter
+  name. It leads with sample-guarded configuration guidance, places occurrence
+  evidence beside the Enabled variations control, and moves p-values, effect
+  size, JS divergence, spread ratio, entropy, simplex diagnostics, and folder
+  inventory into explained advanced sections.
+- Automatic guidance is intentionally conservative: fewer than 30 target
+  observations cannot produce a configuration recommendation, proposed numeric
+  intervals use target q05–q95 only as candidate uniform ranges, and every
+  narrowing recommendation retains a broad exploration reserve for the next
+  validation pass.

@@ -1,0 +1,139 @@
+{
+  "title": "Pass 2 — v1.3 simplex-sampled 24,000-flame broad prior",
+  "output_directory": "outputs/pass-02-v13-baseline",
+  "write_transposed_matrix": true,
+  "enforce_expected_counts": true,
+  "generator_profile_path": "C:/Users/Hugo/Desktop/Fractal flame curator - SeaShells/rendered/generator_profile_run_001e81a2.json",
+  "histogram": {
+    "minimum_bins": 8,
+    "maximum_bins": 40
+  },
+  "comparison": {
+    "minimum_reference_observations": 100,
+    "minimum_target_observations": 30
+  },
+  "simplex": {
+    "two_variation_bins": 18,
+    "simplex_grid_bins": 10
+  },
+  "groups": [
+    {
+      "name": "reference_pass_02_v13",
+      "folders": [
+        "C:/Users/Hugo/Desktop/Fractal flame curator - SeaShells/rendered"
+      ],
+      "include_run_ids": [
+        "001e81a2"
+      ],
+      "expected_flame_count": 24000
+    },
+    {
+      "name": "rating_1_inventory",
+      "folders": [
+        "C:/Users/Hugo/Desktop/Fractal flame curator - SeaShells/ratings/1"
+      ],
+      "analyze": false
+    },
+    {
+      "name": "rating_2_inventory",
+      "folders": [
+        "C:/Users/Hugo/Desktop/Fractal flame curator - SeaShells/ratings/2"
+      ],
+      "analyze": false
+    },
+    {
+      "name": "rating_3_inventory",
+      "folders": [
+        "C:/Users/Hugo/Desktop/Fractal flame curator - SeaShells/ratings/3"
+      ],
+      "analyze": false
+    },
+    {
+      "name": "rating_4_inventory",
+      "folders": [
+        "C:/Users/Hugo/Desktop/Fractal flame curator - SeaShells/ratings/4"
+      ],
+      "analyze": false
+    },
+    {
+      "name": "rating_5_inventory",
+      "folders": [
+        "C:/Users/Hugo/Desktop/Fractal flame curator - SeaShells/ratings/5"
+      ],
+      "analyze": false
+    }
+  ],
+  "reference_group": "reference_pass_02_v13",
+  "comparison_groups": [],
+  "expected_generator": {
+    "minimum_transform_count": 2,
+    "maximum_transform_count": 5,
+    "symmetry_types": [
+      "rotational"
+    ],
+    "symmetry_chance": 0.4,
+    "symmetry_orders": [
+      2,
+      3
+    ],
+    "minimum_affine_rotation_degrees": -180.0,
+    "maximum_affine_rotation_degrees": 180.0,
+    "minimum_affine_scale": 0.35,
+    "maximum_affine_scale": 0.85,
+    "minimum_affine_shear": -0.25,
+    "maximum_affine_shear": 0.25,
+    "translation_extent": 0.75,
+    "transform_selection_balance": 0.35,
+    "minimum_variation_count": 1,
+    "maximum_variation_count": 3,
+    "enabled_variations": [
+      "linear",
+      "sinusoidal",
+      "spherical",
+      "swirl",
+      "horseshoe",
+      "polar",
+      "handkerchief",
+      "heart",
+      "disc",
+      "spiral",
+      "hyperbolic",
+      "diamond",
+      "ex",
+      "julia",
+      "bent",
+      "waves",
+      "fisheye",
+      "popcorn",
+      "exponential",
+      "power",
+      "cosine",
+      "rings",
+      "fan",
+      "blob",
+      "pdj",
+      "perspective",
+      "noise",
+      "julian",
+      "juliascope",
+      "curl",
+      "rectangles",
+      "tangent",
+      "cross",
+      "rays",
+      "secant",
+      "twintrian",
+      "blur",
+      "radial_blur"
+    ],
+    "minimum_variation_share": 0.05,
+    "post_transform_chance": 0.42,
+    "minimum_post_rotation_degrees": -180.0,
+    "maximum_post_rotation_degrees": 180.0,
+    "minimum_post_scale": 0.75,
+    "maximum_post_scale": 1.25,
+    "post_translation_extent": 0.18,
+    "allow_final_transforms": false,
+    "final_transform_chance": 0.15
+  }
+}
