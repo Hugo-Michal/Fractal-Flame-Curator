@@ -14,7 +14,7 @@ public sealed class FlameGenome
     public double Rotate { get; set; }
     public int Oversample { get; set; } = 1;
     public double FilterRadius { get; set; } = 0.5;
-    public int Quality { get; set; } = 20_000_000;
+    public long Quality { get; set; } = 20_000_000;
     public double Brightness { get; set; } = 1;
     public double Gamma { get; set; } = 2.2;
     public double GammaThreshold { get; set; } = 0.01;
@@ -52,6 +52,50 @@ public sealed class FlameGenome
         clone.FinalTransform = FinalTransform?.Clone();
         return clone;
     }
+}
+
+public readonly record struct FlameCamera(double CenterX, double CenterY, double Scale, double Rotate)
+{
+    public static FlameCamera From(FlameGenome genome) => new(genome.CenterX, genome.CenterY, genome.Scale, genome.Rotate);
+
+    public void ApplyTo(FlameGenome genome)
+    {
+        genome.CenterX = CenterX;
+        genome.CenterY = CenterY;
+        genome.Scale = Scale;
+        genome.Rotate = Rotate;
+    }
+
+    public CameraPreviewTransform RelativePreviewFrom(FlameCamera source, double imageWidth, double imageHeight)
+    {
+        var scale = Scale / source.Scale;
+        var angle = (Rotate - source.Rotate) * Math.PI / 180d;
+        var cosine = Math.Cos(angle);
+        var sine = Math.Sin(angle);
+        var m11 = scale * cosine;
+        var m12 = scale * sine;
+        var m21 = -scale * sine;
+        var m22 = scale * cosine;
+        var translatedSourceX = source.CenterX * cosine - source.CenterY * sine;
+        var translatedSourceY = source.CenterX * sine + source.CenterY * cosine;
+        var translateX = imageWidth * Scale / 400d * (translatedSourceX - CenterX);
+        var translateY = imageHeight * Scale / 400d * (translatedSourceY - CenterY);
+        var centerX = imageWidth / 2d;
+        var centerY = imageHeight / 2d;
+
+        return new CameraPreviewTransform(
+            m11,
+            m12,
+            m21,
+            m22,
+            centerX - m11 * centerX - m21 * centerY + translateX,
+            centerY - m12 * centerX - m22 * centerY + translateY);
+    }
+}
+
+public readonly record struct CameraPreviewTransform(double M11, double M12, double M21, double M22, double OffsetX, double OffsetY)
+{
+    public static CameraPreviewTransform Identity { get; } = new(1, 0, 0, 1, 0, 0);
 }
 
 public sealed class FlameTransform
@@ -168,8 +212,10 @@ public sealed record RenderSettings
 {
     public int Width { get; init; } = 2048;
     public int Height { get; init; } = 2048;
-    public int SampleBudget { get; init; } = 20_000_000;
+    public long SampleBudget { get; init; } = 20_000_000;
     public int Oversample { get; init; } = 1;
+    public int WorkerCount { get; init; } = 1;
+    public bool NormalizeDensityBySampleCount { get; init; }
     public double FilterRadius { get; init; } = 0.5;
     public double Brightness { get; init; } = 1;
     public double Gamma { get; init; } = 2.2;

@@ -14,7 +14,7 @@ reproducible under the selected settings.
 
 <p align="center">
   <img src="docs/gallery/flame_000368_seed_639233815191313946_run_001e81a2.png" width="31%" alt="Monochrome spherical flame">
-  <img src="docs/gallery/flame_000457_seed_639234051436097387_run_001e81a2.png" width="31%" alt="Layered geometric flame">
+  <img src="docs/gallery/flame_000457_seed_639234051436097387_run_001e81a2%20Broken%20Heart.png" width="31%" alt="Layered geometric flame">
   <img src="docs/gallery/flame_000320_seed_639233687778397034_run_001e81a2.png" width="31%" alt="Organic branching flame">
 </p>
 

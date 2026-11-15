@@ -1,6 +1,7 @@
 using System.Text;
 using System.Xml.Linq;
 using FractalFlameCurator.Generation;
+using FractalFlameCurator.Controls;
 using FractalFlameCurator.Models;
 using FractalFlameCurator.Pipeline;
 using FractalFlameCurator.Rendering;
@@ -77,6 +78,28 @@ public sealed class PhaseOneTests
     }
 
     [Fact]
+    public void TwentyBillionSampleBudgetRoundTripsInTheFlameFormat()
+    {
+        var genome = new FlameGenerator().Generate(12345);
+        genome.Quality = 20_000_000_000;
+        genome.Width = genome.Height = 10_000;
+        var roundTrip = FlameXmlSerializer.Deserialize(FlameXmlSerializer.Serialize(genome));
+        Assert.Equal(20_000_000_000L, roundTrip.Quality);
+        Assert.Equal(10_000, roundTrip.Width);
+        Assert.Equal(10_000, roundTrip.Height);
+    }
+
+    [Fact]
+    public void GroupedIntegerInputFormatsAndParsesLargeValues()
+    {
+        Assert.Equal("20 000 000 000", GroupedIntegerInput.Format(20_000_000_000));
+        Assert.Equal(20_000_000_000L, GroupedIntegerInput.Parse("20 000 000 000", "Sample budget", 100, 20_000_000_000));
+        Assert.Equal(10_000L, GroupedIntegerInput.Parse("10000", "Output size", 32, 10_000));
+        Assert.False(GroupedIntegerInput.TryParse("20,000,000,000", out _));
+        Assert.Throws<InvalidOperationException>(() => GroupedIntegerInput.Parse("20 000 000 001", "Sample budget", 100, 20_000_000_000));
+    }
+
+    [Fact]
     public void DeserializerStillReadsPreviouslyGeneratedLegacyAttributes()
     {
         var genome = new FlameGenerator().Generate(6789);
@@ -111,6 +134,245 @@ public sealed class PhaseOneTests
         var firstFrame = await renderer.RenderAsync(first, settings, null, CancellationToken.None);
         var secondFrame = await renderer.RenderAsync(second, settings, null, CancellationToken.None);
         Assert.Equal(firstFrame.BgraPixels, secondFrame.BgraPixels);
+    }
+
+    [Fact]
+    public async Task ParallelRendererIsDeterministicForTheSameWorkerCountAndSupportsSixTimesOversampling()
+    {
+        var genome = new FlameGenerator().Generate(777);
+        genome.Palette = PaletteDefinition.Fire;
+        genome.Oversample = 6;
+        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 40_000, Oversample = 6, WorkerCount = 4, Gamma = 1 };
+        var renderer = new CpuFlameRenderer();
+        var first = await renderer.RenderAsync(genome, settings, null, CancellationToken.None);
+        var second = await renderer.RenderAsync(genome, settings, null, CancellationToken.None);
+        var triple = await renderer.RenderAsync(genome, settings with { Oversample = 3 }, null, CancellationToken.None);
+        Assert.Equal(first.BgraPixels, second.BgraPixels);
+        Assert.False(first.BgraPixels.SequenceEqual(triple.BgraPixels));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SampleThenMapMatchesTheExistingRender(bool color)
+    {
+        var genome = new FlameGenerator().Generate(777);
+        if (color) genome.Palette = PaletteDefinition.Fire;
+        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 30_000, Oversample = 2, WorkerCount = 4, Gamma = 1 };
+        var renderer = new CpuFlameRenderer();
+        var direct = await renderer.RenderAsync(genome, settings, null, CancellationToken.None);
+        var histogram = await renderer.SampleAsync(genome, settings, null, CancellationToken.None);
+        var mapped = await renderer.MapAsync(histogram, settings, CancellationToken.None);
+        Assert.Equal(direct.BgraPixels, mapped.BgraPixels);
+    }
+
+    [Fact]
+    public async Task RenderSessionReusesSamplesForAdjustmentsAndPreservesThemOnCancellation()
+    {
+        var genome = new FlameGenerator().Generate(123);
+        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 50_000, Gamma = 1, BlackPoint = 0.85 };
+        var renderer = new CountingHistogramRenderer();
+        var session = new FlameRenderSession(renderer);
+        Assert.Equal(FlameRenderChange.Sampling, session.GetChange(genome, settings, 0));
+        async Task<RenderedFrame> Apply(RenderSettings values)
+        {
+            var prepared = await session.PrepareAsync(genome, values, 0, null, CancellationToken.None);
+            session.Commit(prepared);
+            return prepared.Frame;
+        }
+        var original = await Apply(settings);
+        Assert.Equal(FlameRenderChange.None, session.GetChange(genome, settings, 0));
+
+        var adjusted = settings with { Gamma = 0.6 };
+        Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, adjusted, 0));
+        var brighter = await Apply(adjusted);
+        Assert.False(original.BgraPixels.SequenceEqual(brighter.BgraPixels));
+        var restored = await Apply(settings);
+        Assert.Equal(original.BgraPixels, restored.BgraPixels);
+        Assert.Equal(1, renderer.Samples);
+        Assert.Equal(3, renderer.Maps);
+
+        foreach (var values in new[]
+        {
+            settings with { Brightness = 0.8 }, settings with { Vibrancy = 0.5 },
+            settings with { WhitePoint = 0.1 }, settings with { BlackPoint = 0.9 },
+            settings with { ContrastCurve = 1.2 }, settings with { LowDensityCutoff = 0.02 }
+        }) Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, values, 0));
+        Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, settings with { FilterRadius = 1 }, 0));
+        Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, settings, 1));
+        Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, settings with { NormalizeDensityBySampleCount = true }, 0));
+        Assert.Equal(FlameRenderChange.Sampling, session.GetChange(genome, settings with { SampleBudget = 60_000 }, 0));
+        Assert.Equal(FlameRenderChange.Sampling, session.GetChange(genome, settings with { Oversample = 2 }, 0));
+        Assert.Equal(FlameRenderChange.Sampling, session.GetChange(genome, settings with { Width = 128, Height = 128 }, 0));
+        Assert.Equal(FlameRenderChange.Sampling, session.GetChange(genome, settings with { WorkerCount = 2 }, 0));
+        var changedCamera = genome.Clone();
+        changedCamera.CenterX = 0.25;
+        Assert.Equal(FlameRenderChange.Sampling, session.GetChange(changedCamera, settings, 0));
+        var changedPalette = genome.Clone();
+        changedPalette.Palette = PaletteDefinition.Fire;
+        Assert.Equal(FlameRenderChange.Sampling, session.GetChange(changedPalette, settings, 0));
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.PrepareAsync(genome, adjusted, 0, null, cancellation.Token));
+        Assert.Equal(FlameRenderChange.None, session.GetChange(genome, settings, 0));
+        Assert.Same(restored, (await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None)).Frame);
+
+        var newSamples = settings with { SampleBudget = 60_000 };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.PrepareAsync(genome, newSamples, 0, null, cancellation.Token));
+        Assert.Equal(FlameRenderChange.None, session.GetChange(genome, settings, 0));
+        renderer.FailNextMap = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.PrepareAsync(genome, newSamples, 0, null, CancellationToken.None));
+        Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, newSamples, 0));
+        await Apply(newSamples);
+        Assert.Equal(2, renderer.Samples);
+        session.Clear();
+        Assert.Equal(FlameRenderChange.Sampling, session.GetChange(genome, settings, 0));
+    }
+
+    [Fact]
+    public async Task MasterCurveChangesReuseSamplesAndCanRestoreTheOriginalPixels()
+    {
+        var genome = new FlameGenerator().Generate(123);
+        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 50_000, Gamma = 1 };
+        var renderer = new CountingHistogramRenderer();
+        var session = new FlameRenderSession(renderer);
+        var original = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None);
+        session.Commit(original);
+        var direct = await new CpuFlameRenderer().RenderAsync(genome, settings, null, CancellationToken.None);
+        Assert.Equal(direct.BgraPixels, original.Frame.BgraPixels);
+        Assert.Equal(64 * 64, original.ColorHistogram.Red.Sum());
+        Assert.Equal(FlameRenderChange.None, session.GetChange(genome, settings, 0, new ToneCurve(ToneCurve.Identity.Points)));
+        var curve = new ToneCurve([new(0, 0), new(0.5, 0.8), new(1, 1)]);
+        Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, settings, 0, curve));
+        var edited = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None, curve);
+        session.Commit(edited);
+        Assert.False(original.Frame.BgraPixels.SequenceEqual(edited.Frame.BgraPixels));
+        Assert.Equal(original.ColorHistogram.Red, edited.ColorHistogram.Red);
+        Assert.Equal(original.ColorHistogram.Green, edited.ColorHistogram.Green);
+        Assert.Equal(original.ColorHistogram.Blue, edited.ColorHistogram.Blue);
+        var restored = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None);
+        session.Commit(restored);
+        Assert.Equal(original.Frame.BgraPixels, restored.Frame.BgraPixels);
+        var smoothed = await session.PrepareAsync(genome, settings, 1, null, CancellationToken.None, curve);
+        Assert.False(original.ColorHistogram.Red.SequenceEqual(smoothed.ColorHistogram.Red));
+        Assert.Equal(1, renderer.Samples);
+        Assert.Equal(4, renderer.Maps);
+    }
+
+    [Fact]
+    public async Task ParallelRendererReportsTheFullBudgetAndCancels()
+    {
+        var genome = new FlameGenerator().Generate(123);
+        var renderer = new CpuFlameRenderer();
+        var progress = new RecordingProgress();
+        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 30_000, WorkerCount = 4 };
+        await renderer.RenderAsync(genome, settings, progress, CancellationToken.None);
+        Assert.Equal(settings.SampleBudget, progress.Last.CompletedSamples);
+        using var cancellation = new CancellationTokenSource();
+        var cancelDuringSampling = new CancellingProgress(cancellation);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => renderer.RenderAsync(genome, settings with { SampleBudget = 20_000_000 }, cancelDuringSampling, cancellation.Token));
+        Assert.True(cancelDuringSampling.SawSamples);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    public async Task TwentyBillionSampleRenderReportsTheFullBudgetAndCancels(int workers)
+    {
+        var genome = new FlameGenerator().Generate(123);
+        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 20_000_000_000, WorkerCount = workers };
+        using var cancellation = new CancellationTokenSource();
+        var progress = new CancellingProgress(cancellation);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new CpuFlameRenderer().RenderAsync(genome, settings, progress, cancellation.Token));
+        Assert.True(progress.SawSamples);
+        Assert.Equal(20_000_000_000L, progress.TotalSamples);
+    }
+
+    [Fact]
+    public async Task RendererProducesAnImageLargerThanThePreviousLimit()
+    {
+        var genome = new FlameGenerator().Generate(123);
+        var frame = await new CpuFlameRenderer().RenderAsync(genome,
+            new RenderSettings { Width = 4097, Height = 4097, SampleBudget = 100 }, null, CancellationToken.None);
+        Assert.Equal(4097, frame.Width);
+        Assert.Equal(4097, frame.Height);
+        Assert.Equal(4097 * 4097 * 4, frame.BgraPixels.Length);
+    }
+
+    [Fact]
+    public void SmoothingReducesAnIsolatedPixelWithoutChangingTheInput()
+    {
+        var pixels = Enumerable.Repeat((byte)255, 7 * 7 * 4).ToArray();
+        var center = (3 * 7 + 3) * 4;
+        pixels[center] = pixels[center + 1] = pixels[center + 2] = 0;
+        var frame = new RenderedFrame(7, 7, pixels);
+        var smoothed = FrameSmoother.Apply(frame, 1, 2, CancellationToken.None);
+        Assert.Equal(0, frame.BgraPixels[center]);
+        Assert.InRange(smoothed.BgraPixels[center], (byte)1, (byte)254);
+        Assert.True(smoothed.BgraPixels[center + 4] < 255);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => FrameSmoother.Apply(frame, 1, 2, cancellation.Token));
+    }
+
+    [Fact]
+    public void OptionalDensityNormalizationKeepsToneStableWhenCountsAndBudgetScaleTogether()
+    {
+        var counts = new[] { 0d, 4d, 16d, 100d };
+        var settings = new RenderSettings { SampleBudget = 20_000_000, Gamma = 1, NormalizeDensityBySampleCount = true };
+        var baseline = ToneMapper.Map(counts, counts, counts, counts, settings, true);
+        var denser = counts.Select(count => count * 10).ToArray();
+        var scaled = ToneMapper.Map(denser, denser, denser, denser, settings with { SampleBudget = 200_000_000 }, true);
+        Assert.Equal(baseline, scaled);
+    }
+
+    [Fact]
+    public void MasterCurveIsSmoothAndDoesNotOvershootItsControlPoints()
+    {
+        Assert.Equal(Enumerable.Range(0, 256).Select(i => (byte)i), ToneCurve.Identity.CreateLookup());
+        var curve = new ToneCurve([new(0, 0), new(0.4, 0.8), new(1, 1)]);
+        var lookup = curve.CreateLookup();
+        Assert.InRange(lookup[102], (byte)203, (byte)205);
+        Assert.True(lookup.Zip(lookup.Skip(1), (left, right) => left <= right).All(value => value));
+        Assert.Equal(0, lookup[0]);
+        Assert.Equal(255, lookup[255]);
+        var inverted = new ToneCurve([new(0, 1), new(1, 0)]).CreateLookup();
+        Assert.Equal(255, inverted[0]);
+        Assert.Equal(0, inverted[255]);
+        var peak = new ToneCurve([new(0, 0), new(0.5, 1), new(1, 0)]).CreateLookup();
+        Assert.True(peak[100] < peak[128]);
+        Assert.True(peak[200] < peak[128]);
+        var levels = new ToneCurve([new(0.2, 0), new(0.8, 1)]).CreateLookup();
+        Assert.All(levels.Take(52), value => Assert.Equal(0, value));
+        Assert.All(levels.Skip(204), value => Assert.Equal(255, value));
+        Assert.InRange(levels[128], (byte)127, (byte)129);
+        Assert.Throws<ArgumentException>(() => new ToneCurve([new(0, 0), new(0.5, 0.5), new(0.5, 0.7), new(1, 1)]));
+    }
+
+    [Fact]
+    public void MasterCurveUpdatesEveryRgbChannelAndReportsTheInputHistogram()
+    {
+        var frame = new RenderedFrame(2, 1, [10, 20, 30, 255, 200, 150, 100, 128]);
+        var histogram = BitmapToneCurve.Apply(frame, new ToneCurve([new(0, 1), new(1, 0)]), CancellationToken.None);
+        Assert.Equal(new byte[] { 245, 235, 225, 255, 55, 105, 155, 128 }, frame.BgraPixels);
+        Assert.Equal(1, histogram.Red[30]);
+        Assert.Equal(1, histogram.Green[150]);
+        Assert.Equal(1, histogram.Blue[200]);
+        Assert.Equal(2, histogram.Red.Sum());
+        Assert.Equal(2, histogram.Green.Sum());
+        Assert.Equal(2, histogram.Blue.Sum());
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => BitmapToneCurve.Apply(frame, ToneCurve.Identity, cancellation.Token));
+    }
+
+    [Fact]
+    public void ViewportCanFitAHighResolutionImageInASmallArea()
+    {
+        Assert.Equal(0.03, ViewportZoom.Fit(300, 400, 10_000, 10_000), 8);
+        Assert.Equal(ViewportZoom.Minimum, ViewportZoom.Clamp(0));
+        Assert.Equal(ViewportZoom.Maximum, ViewportZoom.Clamp(100));
     }
 
     [Fact]
@@ -588,6 +850,77 @@ public sealed class PhaseOneTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public void CameraPreviewUsesTheSavedCameraAsItsBaseline()
+    {
+        var savedCamera = new FlameCamera(0.5, -0.25, 150, 30);
+
+        var unchanged = savedCamera.RelativePreviewFrom(savedCamera, 2048, 2048);
+        var rotated = (savedCamera with { Rotate = 120 }).RelativePreviewFrom(savedCamera, 2048, 2048);
+
+        Assert.Equal(CameraPreviewTransform.Identity, unchanged);
+        Assert.Equal(0, rotated.M11, 10);
+        Assert.Equal(1, rotated.M12, 10);
+        Assert.Equal(-1, rotated.M21, 10);
+        Assert.Equal(0, rotated.M22, 10);
+    }
+
+    [Fact]
+    public async Task RerenderWithCameraPersistsTheCameraAfterSuccess()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var genome = new FlameGenerator().Generate(902);
+            var archive = new SourceArchive(root);
+            var artifact = archive.Save(genome, new RenderedFrame(4, 4, Enumerable.Repeat((byte)255, 4 * 4 * 4).ToArray()), 1);
+            var camera = new FlameCamera(0.5, -0.25, 150, 30);
+            var renderer = new CameraCapturingRenderer();
+
+            await new ArtifactRerenderer(renderer).RerenderAsync(
+                artifact,
+                PaletteDefinition.Fire,
+                new RenderSettings { Width = 4, Height = 4, SampleBudget = 100 },
+                null,
+                CancellationToken.None,
+                camera);
+
+            Assert.Equal(camera, FlameCamera.From(FlameXmlSerializer.Load(artifact.FlamePath)));
+            Assert.Equal(camera, renderer.RenderedCamera);
+            Assert.True(SourceArchive.IsCompleteCandidate(artifact.ImagePath));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task CancelledCameraRerenderPreservesTheExistingPair()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var genome = new FlameGenerator().Generate(903);
+            var archive = new SourceArchive(root);
+            var artifact = archive.Save(genome, new RenderedFrame(4, 4, Enumerable.Repeat((byte)255, 4 * 4 * 4).ToArray()), 1);
+            var originalFlame = File.ReadAllText(artifact.FlamePath);
+            var originalImage = File.ReadAllBytes(artifact.ImagePath);
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new ArtifactRerenderer(new ReplacementRenderer()).RerenderAsync(
+                artifact,
+                PaletteDefinition.Fire,
+                new RenderSettings { Width = 4, Height = 4, SampleBudget = 100 },
+                null,
+                cancellation.Token,
+                new FlameCamera(0.5, -0.25, 150, 30)));
+
+            Assert.Equal(originalFlame, File.ReadAllText(artifact.FlamePath));
+            Assert.Equal(originalImage, File.ReadAllBytes(artifact.ImagePath));
+            Assert.True(SourceArchive.IsCompleteCandidate(artifact.ImagePath));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private static string NewTempDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "ffc-tests", Guid.NewGuid().ToString("N"));
@@ -622,6 +955,32 @@ public sealed class PhaseOneTests
         public Task<RenderedFrame> RenderAsync(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken) => throw new InvalidOperationException("synthetic renderer failure");
     }
 
+    private sealed class CountingHistogramRenderer : IHistogramFlameRenderer
+    {
+        private readonly CpuFlameRenderer _inner = new();
+        public int Samples { get; private set; }
+        public int Maps { get; private set; }
+        public bool FailNextMap { get; set; }
+        public RendererStatus Status => _inner.Status;
+        public Task<RenderedFrame> RenderAsync(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken) =>
+            _inner.RenderAsync(genome, settings, progress, cancellationToken);
+        public Task<FlameHistogram> SampleAsync(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken)
+        {
+            Samples++;
+            return _inner.SampleAsync(genome, settings, progress, cancellationToken);
+        }
+        public Task<RenderedFrame> MapAsync(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken)
+        {
+            Maps++;
+            if (FailNextMap)
+            {
+                FailNextMap = false;
+                throw new InvalidOperationException("synthetic mapping failure");
+            }
+            return _inner.MapAsync(histogram, settings, cancellationToken);
+        }
+    }
+
     private sealed class FastRenderer : IFlameRenderer
     {
         public RendererStatus Status { get; } = new("CPU", "Test CPU", false, "Test renderer");
@@ -635,9 +994,34 @@ public sealed class PhaseOneTests
             => Task.FromResult(new RenderedFrame(4, 4, Enumerable.Repeat((byte)0, 4 * 4 * 4).ToArray()));
     }
 
+    private sealed class CameraCapturingRenderer : IFlameRenderer
+    {
+        public RendererStatus Status { get; } = new("CPU", "Test CPU", false, "Test renderer");
+        public FlameCamera? RenderedCamera { get; private set; }
+
+        public Task<RenderedFrame> RenderAsync(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken)
+        {
+            RenderedCamera = FlameCamera.From(genome);
+            return Task.FromResult(new RenderedFrame(4, 4, Enumerable.Repeat((byte)0, 4 * 4 * 4).ToArray()));
+        }
+    }
+
     private sealed class RecordingProgress : IProgress<RenderProgress>
     {
         public RenderProgress Last { get; private set; } = new(0, 0);
         public void Report(RenderProgress value) => Last = value;
+    }
+
+    private sealed class CancellingProgress(CancellationTokenSource cancellation) : IProgress<RenderProgress>
+    {
+        public bool SawSamples { get; private set; }
+        public long TotalSamples { get; private set; }
+        public void Report(RenderProgress value)
+        {
+            TotalSamples = value.TotalSamples;
+            if (value.CompletedSamples <= 0) return;
+            SawSamples = true;
+            cancellation.Cancel();
+        }
     }
 }

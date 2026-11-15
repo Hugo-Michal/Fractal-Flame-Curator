@@ -5,7 +5,7 @@ using FractalFlameCurator.Models;
 
 namespace FractalFlameCurator.Rendering;
 
-public sealed record RenderProgress(int CompletedSamples, int TotalSamples);
+public sealed record RenderProgress(long CompletedSamples, long TotalSamples);
 
 public sealed class RenderedFrame
 {
@@ -43,7 +43,40 @@ public interface IFlameRenderer
     Task<RenderedFrame> RenderAsync(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken);
 }
 
-public sealed class CpuFlameRenderer : IFlameRenderer
+public interface IHistogramFlameRenderer : IFlameRenderer
+{
+    Task<FlameHistogram> SampleAsync(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken);
+    Task<RenderedFrame> MapAsync(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken);
+}
+
+public sealed class FlameHistogram
+{
+    internal FlameHistogram(int width, int height, int oversample, long sampleBudget, bool monochrome,
+        double[] counts, double[] reds, double[] greens, double[] blues)
+    {
+        Width = width;
+        Height = height;
+        Oversample = oversample;
+        SampleBudget = sampleBudget;
+        Monochrome = monochrome;
+        Counts = counts;
+        Reds = reds;
+        Greens = greens;
+        Blues = blues;
+    }
+
+    public int Width { get; }
+    public int Height { get; }
+    public int Oversample { get; }
+    public long SampleBudget { get; }
+    public bool Monochrome { get; }
+    internal double[] Counts { get; }
+    internal double[] Reds { get; }
+    internal double[] Greens { get; }
+    internal double[] Blues { get; }
+}
+
+public sealed class CpuFlameRenderer : IHistogramFlameRenderer
 {
     public RendererStatus Status { get; } = new(
         "CPU",
@@ -53,80 +86,151 @@ public sealed class CpuFlameRenderer : IFlameRenderer
 
     public Task<RenderedFrame> RenderAsync(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken)
     {
-        return Task.Run(() => Render(genome, settings, progress, cancellationToken), cancellationToken);
+        return Task.Run(() => Map(Sample(genome, settings, progress, cancellationToken), settings, cancellationToken), cancellationToken);
     }
 
-    private static RenderedFrame Render(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken)
+    public Task<FlameHistogram> SampleAsync(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken) =>
+        Task.Run(() => Sample(genome, settings, progress, cancellationToken), cancellationToken);
+
+    public Task<RenderedFrame> MapAsync(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken) =>
+        Task.Run(() => Map(histogram, settings, cancellationToken), cancellationToken);
+
+    private static FlameHistogram Sample(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken)
     {
         FlameValidator.ThrowIfInvalid(genome);
-        var width = Math.Clamp(settings.Width, 32, 4096);
-        var height = Math.Clamp(settings.Height, 32, 4096);
-        var oversample = Math.Clamp(settings.Oversample, 1, 3);
+        var width = Math.Clamp(settings.Width, 32, 10_000);
+        var height = Math.Clamp(settings.Height, 32, 10_000);
+        var oversample = Math.Clamp(settings.Oversample, 1, 6);
         var internalWidth = checked(width * oversample);
         var internalHeight = checked(height * oversample);
         var sampleBudget = Math.Max(100, settings.SampleBudget);
-        var counts = new double[internalWidth * internalHeight];
-        var reds = new double[counts.Length];
-        var greens = new double[counts.Length];
-        var blues = new double[counts.Length];
-        var random = new DeterministicRandom(genome.Seed);
+        var counts = new double[checked(internalWidth * internalHeight)];
+        var monochrome = string.Equals(genome.Palette.Name, PaletteDefinition.Monochrome.Name, StringComparison.OrdinalIgnoreCase);
+        // Monochrome tone mapping uses only density, so it does not need three color histograms.
+        var reds = monochrome ? counts : new double[counts.Length];
+        var greens = monochrome ? counts : new double[counts.Length];
+        var blues = monochrome ? counts : new double[counts.Length];
         var cumulativeWeights = BuildWeights(genome.Transforms);
-        var x = random.NextSigned(1);
-        var y = random.NextSigned(1);
-        var colorPosition = 0.5;
-        var burnIn = 40;
+        var workers = Math.Clamp(settings.WorkerCount, 1, Math.Max(1, Environment.ProcessorCount));
+        var completedSamples = 0L;
+        var lastProgress = 0L;
+        var progressLock = new object();
 
-        for (var i = 0; i < sampleBudget + burnIn; i++)
+        void ReportParallel(long count)
         {
-            if ((i & 4095) == 0)
+            var completed = Interlocked.Add(ref completedSamples, count);
+            if (progress is null) return;
+            lock (progressLock)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                progress?.Report(new RenderProgress(Math.Min(i, sampleBudget), sampleBudget));
+                var now = Environment.TickCount64;
+                if (now - lastProgress < 100 && completed < sampleBudget) return;
+                lastProgress = now;
+                progress.Report(new RenderProgress(Math.Min(Volatile.Read(ref completedSamples), sampleBudget), sampleBudget));
             }
-
-            var transform = genome.Transforms[PickTransform(cumulativeWeights, random.NextDouble() * cumulativeWeights[^1])];
-            if (!TryApplyTransform(transform, x, y, random, out var transformedX, out var transformedY))
-            {
-                x = random.NextSigned(1);
-                y = random.NextSigned(1);
-                continue;
-            }
-            x = transformedX;
-            y = transformedY;
-            ApplySymmetry(genome.Symmetry, random, ref x, ref y);
-            colorPosition = colorPosition * 0.65 + transform.Color * 0.35;
-
-            if (!double.IsFinite(x) || !double.IsFinite(y) || Math.Abs(x) > 1000 || Math.Abs(y) > 1000)
-            {
-                x = random.NextSigned(1);
-                y = random.NextSigned(1);
-                continue;
-            }
-            if (i < burnIn) continue;
-
-            var plotX = x;
-            var plotY = y;
-            if (genome.FinalTransform is { } finalTransform
-                && !TryApplyTransform(finalTransform, x, y, random, out plotX, out plotY)) continue;
-            var cameraAngle = genome.Rotate * Math.PI / 180;
-            var cameraX = plotX * Math.Cos(cameraAngle) - plotY * Math.Sin(cameraAngle);
-            var cameraY = plotX * Math.Sin(cameraAngle) + plotY * Math.Cos(cameraAngle);
-            var viewSpan = 4d / (genome.Scale / 100d);
-            var px = (int)Math.Round((cameraX - genome.CenterX) / viewSpan * internalWidth + internalWidth / 2d);
-            var py = (int)Math.Round((cameraY - genome.CenterY) / viewSpan * internalHeight + internalHeight / 2d);
-            if ((uint)px >= (uint)internalWidth || (uint)py >= (uint)internalHeight) continue;
-            var index = py * internalWidth + px;
-            var paletteColor = genome.Palette.Sample(colorPosition);
-            counts[index] += 1;
-            reds[index] += paletteColor.R;
-            greens[index] += paletteColor.G;
-            blues[index] += paletteColor.B;
         }
+
+        void Sample(int worker, long workerBudget)
+        {
+            var seed = unchecked(genome.Seed + (long)(0x9E3779B97F4A7C15UL * (ulong)worker));
+            var random = new DeterministicRandom(seed);
+            var x = random.NextSigned(1);
+            var y = random.NextSigned(1);
+            var colorPosition = 0.5;
+            const int burnIn = 40;
+            var reported = 0L;
+
+            for (long i = 0; i < workerBudget + burnIn; i++)
+            {
+                if ((i & 4095) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (workers == 1) progress?.Report(new RenderProgress(Math.Min(i, sampleBudget), sampleBudget));
+                    else
+                    {
+                        var done = Math.Clamp(i - burnIn, 0, workerBudget);
+                        ReportParallel(done - reported);
+                        reported = done;
+                    }
+                }
+
+                var transform = genome.Transforms[PickTransform(cumulativeWeights, random.NextDouble() * cumulativeWeights[^1])];
+                if (!TryApplyTransform(transform, x, y, random, out var transformedX, out var transformedY))
+                {
+                    x = random.NextSigned(1);
+                    y = random.NextSigned(1);
+                    continue;
+                }
+                x = transformedX;
+                y = transformedY;
+                ApplySymmetry(genome.Symmetry, random, ref x, ref y);
+                colorPosition = colorPosition * 0.65 + transform.Color * 0.35;
+
+                if (!double.IsFinite(x) || !double.IsFinite(y) || Math.Abs(x) > 1000 || Math.Abs(y) > 1000)
+                {
+                    x = random.NextSigned(1);
+                    y = random.NextSigned(1);
+                    continue;
+                }
+                if (i < burnIn) continue;
+
+                var plotX = x;
+                var plotY = y;
+                if (genome.FinalTransform is { } finalTransform
+                    && !TryApplyTransform(finalTransform, x, y, random, out plotX, out plotY)) continue;
+                var cameraAngle = genome.Rotate * Math.PI / 180;
+                var cameraX = plotX * Math.Cos(cameraAngle) - plotY * Math.Sin(cameraAngle);
+                var cameraY = plotX * Math.Sin(cameraAngle) + plotY * Math.Cos(cameraAngle);
+                var viewSpan = 4d / (genome.Scale / 100d);
+                var px = (int)Math.Round((cameraX - genome.CenterX) / viewSpan * internalWidth + internalWidth / 2d);
+                var py = (int)Math.Round((cameraY - genome.CenterY) / viewSpan * internalHeight + internalHeight / 2d);
+                if ((uint)px >= (uint)internalWidth || (uint)py >= (uint)internalHeight) continue;
+                var index = py * internalWidth + px;
+                if (workers == 1) counts[index] += 1;
+                else AtomicAdd(ref counts[index], 1);
+                if (!monochrome)
+                {
+                    var paletteColor = genome.Palette.Sample(colorPosition);
+                    if (workers == 1)
+                    {
+                        reds[index] += paletteColor.R;
+                        greens[index] += paletteColor.G;
+                        blues[index] += paletteColor.B;
+                    }
+                    else
+                    {
+                        AtomicAdd(ref reds[index], paletteColor.R);
+                        AtomicAdd(ref greens[index], paletteColor.G);
+                        AtomicAdd(ref blues[index], paletteColor.B);
+                    }
+                }
+            }
+            if (workers > 1) ReportParallel(workerBudget - reported);
+        }
+
+        if (workers == 1) Sample(0, sampleBudget);
+        else Parallel.For(0, workers, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken },
+            worker => Sample(worker, sampleBudget / workers + (worker < sampleBudget % workers ? 1 : 0)));
         progress?.Report(new RenderProgress(sampleBudget, sampleBudget));
         cancellationToken.ThrowIfCancellationRequested();
 
-        var internalPixels = ToneMapper.Map(counts, reds, greens, blues, settings, string.Equals(genome.Palette.Name, PaletteDefinition.Monochrome.Name, StringComparison.OrdinalIgnoreCase));
-        return new RenderedFrame(width, height, Downsample(internalPixels, internalWidth, internalHeight, width, height, oversample, settings.FilterRadius));
+        return new FlameHistogram(width, height, oversample, sampleBudget, monochrome, counts, reds, greens, blues);
+    }
+
+    private static RenderedFrame Map(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken)
+    {
+        var mapSettings = settings with { SampleBudget = histogram.SampleBudget };
+        var internalPixels = ToneMapper.Map(histogram.Counts, histogram.Reds, histogram.Greens, histogram.Blues,
+            mapSettings, histogram.Monochrome, cancellationToken);
+        return new RenderedFrame(histogram.Width, histogram.Height,
+            Downsample(internalPixels, histogram.Width * histogram.Oversample, histogram.Height * histogram.Oversample,
+                histogram.Width, histogram.Height, histogram.Oversample, settings.FilterRadius, cancellationToken));
+    }
+
+    private static void AtomicAdd(ref double location, double value)
+    {
+        double before;
+        do { before = location; }
+        while (Interlocked.CompareExchange(ref location, before + value, before) != before);
     }
 
     private static double[] BuildWeights(IReadOnlyList<FlameTransform> transforms)
@@ -188,13 +292,14 @@ public sealed class CpuFlameRenderer : IFlameRenderer
         return double.IsFinite(outputX) && double.IsFinite(outputY);
     }
 
-    private static byte[] Downsample(byte[] source, int sourceWidth, int sourceHeight, int width, int height, int oversample, double filterRadius)
+    private static byte[] Downsample(byte[] source, int sourceWidth, int sourceHeight, int width, int height, int oversample, double filterRadius, CancellationToken cancellationToken)
     {
         if (oversample == 1 && filterRadius <= 0.75) return source;
         var output = new byte[width * height * 4];
         var radius = Math.Clamp((int)Math.Ceiling(filterRadius), 0, 3);
         for (var y = 0; y < height; y++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (var x = 0; x < width; x++)
             {
                 var centerX = x * oversample + (oversample - 1) / 2;

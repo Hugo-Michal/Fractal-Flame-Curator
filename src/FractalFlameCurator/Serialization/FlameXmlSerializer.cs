@@ -186,19 +186,19 @@ public static class FlameXmlSerializer
         return Math.Max(0.1, genome.Quality / pixelCount);
     }
 
-    private static int ToSampleBudget(double sampleDensity, int width, int height)
+    private static long ToSampleBudget(double sampleDensity, int width, int height)
     {
         var totalSamples = sampleDensity * width * (double)height;
-        return double.IsFinite(totalSamples)
-            ? (int)Math.Clamp(Math.Round(totalSamples), 100, int.MaxValue)
-            : 20_000_000;
+        return ToLongSampleBudget(totalSamples);
     }
 
-    private static int ToLegacySampleBudget(double quality)
+    private static long ToLegacySampleBudget(double quality) => ToLongSampleBudget(quality);
+
+    private static long ToLongSampleBudget(double value)
     {
-        return double.IsFinite(quality)
-            ? (int)Math.Clamp(Math.Round(quality), 100, int.MaxValue)
-            : 20_000_000;
+        if (!double.IsFinite(value)) return 20_000_000;
+        if (value >= long.MaxValue) return long.MaxValue;
+        return (long)Math.Max(100, Math.Round(value));
     }
 
     private static string String(XElement element, string name, string fallback) => element.Attribute(name)?.Value ?? fallback;

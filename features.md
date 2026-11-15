@@ -27,12 +27,40 @@ never controls or edits human ratings.
 ## User interface
 
 The window uses a left control panel and a large image viewport. The Rendering
-and AI Scoring drawers begin expanded; Image, Dataset Statistics, and
+and AI Scoring drawers begin expanded; Camera, Image, Dataset Statistics, and
 Diagnostics begin collapsed. The preview fits the viewport by default, supports
 pointer-anchored mouse-wheel zoom, and provides Previous, Next, Zoom to fit,
 Actual size, and Undo controls.
 The window and Windows executable use the supplied triangular logo recolored
 with white geometry on the requested orange background (`#F1582B`).
+
+### Camera drawer
+
+The Camera drawer is above Image. It has Center X, Center Y, Scale, and
+Rotation-in-degrees sliders. Its controls are loaded from the selected
+candidate's `.flame` only when the drawer is expanded; selecting, navigating,
+fitting, wheel-zooming, or otherwise viewing candidates while it is collapsed
+does not read camera data from their source files.
+
+| Setting | Range | Meaning |
+|---|---:|---|
+| Center X / Center Y | -4 through 4 by default | Saved fractal-view center. A loaded source outside this range expands the relevant slider enough to preserve and edit its value. |
+| Scale | 20 through 400 | Saved fractal zoom; larger values show a closer view. |
+| Rotation | -180 through 180 degrees | Saved camera rotation. Equivalent full turns are treated as the same unchanged camera. |
+
+Changing a camera slider immediately transforms the already loaded PNG inside
+its fixed square preview. This is a lightweight visual preview, not a render:
+it never allocates another image, writes a file, or exposes detail that is not
+in the loaded PNG. The preview is calculated relative to the camera that
+produced that PNG. Consequently, after a successful re-render, the saved camera
+becomes the new baseline and later scale, X/Y, or rotation edits do not apply a
+second copy of an earlier rotation or transform. Closing the Camera drawer
+discards any unsaved preview and restores the loaded PNG.
+
+Viewport navigation remains separate. Mouse-wheel zoom, Zoom to fit, Actual
+size, and scroll position operate on the outer viewport and never modify or
+save camera values. Camera scale controls the persisted fractal view; it does
+not replace wheel zoom.
 
 ### Rendering drawer
 
@@ -91,7 +119,7 @@ re-render. They do not silently alter a saved .flame genome.
 | Setting | Default | Meaning |
 |---|---:|---|
 | Output resolution | 2048 by 2048 | Square final image size. |
-| Sample budget | 20,000,000 points | Histogram samples used by the CPU renderer. The UI permits up to 500,000,000. |
+| Sample budget | 20,000,000 points | Histogram samples used by the CPU renderer. The UI permits 100 through 20,000,000,000. |
 | Oversample | 1 | Real internal render multiplier before downsampling; valid values are 1 to 3. |
 | Filter radius | 0.5 | Downsampling filter radius. |
 | Gamma | 1 in the UI | Tone response for the viewport render. |
@@ -104,10 +132,75 @@ re-render. They do not silently alter a saved .flame genome.
 | Palette | Monochrome | Explicit default; Fire, Ocean, and Violet are opt-in alternatives. |
 
 Re-render current flame toggles to cancellation while active. It loads the
-source .flame, applies the selected image settings, and replaces only the
-current PNG after a successful render. Re-render rated flames processes all
-complete rated pairs with the configured worker count; it may replace rated
-PNGs in place but preserves star folders and every source .flame file.
+source .flame, applies the selected image settings, and replaces the current
+PNG after a successful render. When the open Camera drawer has changed camera
+values, the same successful operation also saves Center X, Center Y, Scale, and
+Rotation to that source `.flame`; cancellation or failure preserves the
+previous PNG and source file. With no pending camera change, the source `.flame`
+is preserved unchanged. Re-render rated flames processes all complete rated
+pairs with the configured worker count; it may replace rated PNGs in place but
+preserves star folders and every source .flame file, including their saved
+cameras.
+
+Open flame re-render tool opens a resizable window for any supported `.flame`
+file, including files outside the selected workspace. It starts with the main
+window's sampling settings, remaining image settings, and palette, then lets the
+user edit them independently.
+Its controls are separated into two steps:
+
+1. Flame sampling: camera center X/Y, scale, rotation, square output size from
+   32 to 10,000 pixels, sample budget from 100 to 20 billion, oversampling from
+   1 to 6, CPU workers, and built-in or source palette. Changing any of these
+   requires sampling new points. Camera fields start with the source values.
+2. Image adjustments: a master RGB curve, filter radius, Gaussian smoothing,
+   vibrancy, low-density cutoff, and optional tone stability. These use the
+   retained density and color data after sampling and do not sample new points.
+
+The master curve is drawn over the red, green, and blue intensity histograms of
+the image after tone mapping, filtering, and smoothing, but before the curve.
+The histogram uses a logarithmic count scale; monochrome channels appear in gray.
+Applying a curve-only edit leaves the histogram unchanged; applying a change to
+the pre-curve image updates it. The curve starts as an identity diagonal.
+Clicking adds a point, dragging moves it, and right-clicking an interior point
+removes it. Black and white markers below the graph move the input endpoints
+horizontally; the endpoint points can also move vertically or horizontally.
+Input values outside those endpoints map to the corresponding endpoint output.
+Points stay ordered horizontally; vertical values may be non-monotonic. A
+shape-preserving cubic interpolation joins them smoothly. Arrow keys move the
+selected point, Insert adds one, Delete removes an interior point, and Reset
+curve restores the diagonal. The same curve is applied to the image's red,
+green, and blue channels as the final image adjustment. The chart and image
+continue to show the last completed result until Re-render is pressed.
+Standalone tone mapping starts with neutral gamma, brightness, contrast, white
+point, and black point; those separate controls remain in the main window.
+
+A single Re-render button chooses the necessary work based on the settings that
+changed; the window states whether it will sample again or apply adjustments.
+If nothing changed, it does not repeat work. Pending edits do not alter the last
+preview or saved PNG; saving always saves the displayed preview. Each adjustment
+is recalculated from the retained data rather than compounding earlier edits.
+The data remains in memory only while the tool is open or until another flame is
+loaded. A sampling result remains available if later image processing fails or
+is cancelled; a failed or cancelled sampling operation keeps the prior preview
+and sampled data. An existing PNG and `.flame` file cannot restore the data.
+
+Oversampling and output size are checked against image and estimated available
+memory limits before sampling or remapping; existing retained data is included
+in the available-memory check. Sample-budget fields in both windows and the
+standalone output-size field group digits with spaces as the user types; the
+fields accept grouped or ungrouped whole numbers and report invalid values.
+Displayed sample progress also groups digits with spaces. Optional Gaussian
+smoothing from 0 to 3 pixels reduces grain but can soften detail. Tone stability
+scales density to a 20-million-point reference; it cannot guarantee an identical
+image when other settings change.
+
+Re-render toggles to cancellation while active. A successful operation previews
+the image and enables saving a PNG to a chosen path; cancellation or failure
+keeps any previous preview and saved files. The source `.flame` is never changed,
+and the tool does not add the result to workspace ratings or candidates. The
+preview fits the viewport by default, supports mouse-wheel zoom in and out, and
+has Zoom to fit and Actual size buttons. The main viewport also permits zooming
+below five percent so large images can fit in a small viewport.
 
 ### Rating and navigation
 
@@ -189,7 +282,12 @@ transforms, unknown variations, or non-renderable genomes are rejected before
 serialization or rendering. A fixed seed, applied generator-settings snapshot,
 palette, and render settings reproduce the same genome and pixels.
 
-The built-in renderer is a bounded managed CPU renderer. It reports CPU
+The built-in renderer is a bounded managed CPU renderer. The standalone tool
+can split a render into reproducibly seeded parallel CPU sampling streams; the
+same seed, settings, and worker count produce the same pixels. Changing worker
+count changes the sampling streams and may change the pixels. Existing session
+rendering defaults to one sampling worker per render. Monochrome rendering uses
+only a density histogram to reduce memory consumption. The renderer reports CPU
 honestly and never claims GPU use. Rendering work is cancellable. Pause blocks
 both queue consumption and active renderer progress, so a paused session does
 not continue CPU sampling. The UI updates status at most four times per second

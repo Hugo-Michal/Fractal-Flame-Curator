@@ -5,10 +5,12 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using FractalFlameCurator.Ai;
+using FractalFlameCurator.Controls;
 using FractalFlameCurator.Generation;
 using FractalFlameCurator.Models;
 using FractalFlameCurator.Pipeline;
 using FractalFlameCurator.Rendering;
+using FractalFlameCurator.Serialization;
 using FractalFlameCurator.Storage;
 using Forms = System.Windows.Forms;
 using WpfButton = System.Windows.Controls.Button;
@@ -42,6 +44,9 @@ public partial class MainWindow : Window
     private int _imagePixelHeight;
     private bool _fitToViewport = true;
     private bool _applyingZoom;
+    private FlameCamera? _cameraSource;
+    private string? _cameraSourcePath;
+    private bool _applyingCameraControls;
     private bool _closing;
     private bool _renderControlsLocked;
     private CancellationTokenSource? _rerenderCancellation;
@@ -73,6 +78,7 @@ public partial class MainWindow : Window
         WorkersTextBox.Text = Math.Max(1, Math.Min(4, Environment.ProcessorCount)).ToString(CultureInfo.InvariantCulture);
         QueueCapacityTextBox.Text = "4";
         SampleBudgetTextBox.Text = "20000000";
+        GroupedIntegerInput.Attach(SampleBudgetTextBox);
         OversampleComboBox.SelectedIndex = 0;
         FilterRadiusTextBox.Text = "0.5";
         GammaTextBox.Text = "1";
@@ -191,6 +197,7 @@ public partial class MainWindow : Window
 
         var artifact = ResolveCurrentArtifact();
         var settings = ReadImageRenderSettings(out var palette);
+        var camera = PendingCamera();
         using var cancellation = new CancellationTokenSource();
         _rerenderCancellation = cancellation;
         RerenderCurrentButton.Content = "Cancel re-render";
@@ -199,14 +206,17 @@ public partial class MainWindow : Window
         {
             var progress = new ThrottledRenderProgress(Dispatcher, update =>
             {
-                ImageSettingsStatusTextBlock.Text = $"Re-rendering current flame… {update.CompletedSamples:N0}/{update.TotalSamples:N0} points";
+                ImageSettingsStatusTextBlock.Text = $"Re-rendering current flame… {GroupedIntegerInput.Format(update.CompletedSamples)}/{GroupedIntegerInput.Format(update.TotalSamples)} points";
             });
-            await _artifactRerenderer.RerenderAsync(artifact, palette, settings, progress, cancellation.Token);
+            await _artifactRerenderer.RerenderAsync(artifact, palette, settings, progress, cancellation.Token, camera);
             await _aiService.InvalidateAsync(artifact.SourceId);
             _catalog.ClearScore(artifact.SourceId);
             RefreshCandidates();
+            ClearCameraPreview();
             ShowArtifact(artifact);
-            ImageSettingsStatusTextBlock.Text = "Current viewport updated. The source .flame file was preserved.";
+            ImageSettingsStatusTextBlock.Text = camera is null
+                ? "Current viewport updated. The source .flame file was preserved."
+                : "Current viewport and saved camera updated.";
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -284,7 +294,7 @@ public partial class MainWindow : Window
                 });
                 var progress = new ThrottledRenderProgress(Dispatcher, update =>
                 {
-                    ImageSettingsStatusTextBlock.Text = $"Re-rendering rated flames… {completed}/{artifacts.Count} using {workerCount} workers · {update.CompletedSamples:N0}/{update.TotalSamples:N0} points";
+                    ImageSettingsStatusTextBlock.Text = $"Re-rendering rated flames… {completed}/{artifacts.Count} using {workerCount} workers · {GroupedIntegerInput.Format(update.CompletedSamples)}/{GroupedIntegerInput.Format(update.TotalSamples)} points";
                 });
                 await _artifactRerenderer.RerenderAsync(artifact, palette, settings, progress, token);
                 var finished = Interlocked.Increment(ref completed);
@@ -317,7 +327,7 @@ public partial class MainWindow : Window
         {
             Width = 2048,
             Height = 2048,
-            SampleBudget = ParseInt(SampleBudgetTextBox, 20_000_000, 100, 500_000_000),
+            SampleBudget = GroupedIntegerInput.Parse(SampleBudgetTextBox.Text, "Sample budget", 100, 20_000_000_000),
             Oversample = ParseInt((OversampleComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString(), 1, 1, 3),
             FilterRadius = ParseDouble(FilterRadiusTextBox, 0.5, 0, 3),
             Gamma = ParseDouble(GammaTextBox, 1, 0.1, 8),
@@ -329,6 +339,20 @@ public partial class MainWindow : Window
             LowDensityCutoff = ParseDouble(LowDensityCutoffTextBox, 0.01, 0, 1),
             PaletteName = palette.Name
         };
+    }
+
+    private void OpenFlameRerenderTool_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var settings = ReadImageRenderSettings(out var palette);
+            var dialog = new FlameRerenderWindow(_renderer, settings, palette) { Owner = this };
+            dialog.ShowDialog();
+        }
+        catch (Exception exception)
+        {
+            ImageSettingsStatusTextBlock.Text = $"Could not open flame re-render tool: {exception.Message}";
+        }
     }
 
     private void Pause_Click(object sender, RoutedEventArgs e)
@@ -469,6 +493,7 @@ public partial class MainWindow : Window
         if (!File.Exists(artifact.ImagePath)) return;
         try
         {
+            if (!string.Equals(_current?.FlamePath, artifact.FlamePath, StringComparison.OrdinalIgnoreCase)) ClearCameraPreview();
             var bitmap = new System.Windows.Media.Imaging.BitmapImage();
             bitmap.BeginInit();
             bitmap.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
@@ -486,6 +511,7 @@ public partial class MainWindow : Window
             EmptyPreviewTextBlock.Visibility = Visibility.Collapsed;
             UpdateCurrentText();
             if (_fitToViewport) ApplyFitZoom(); else ApplyZoom(_zoomScale);
+            if (CameraExpander.IsExpanded) LoadCameraForCurrentArtifact();
         }
         catch (Exception exception) { CurrentTextBlock.Text = $"Could not open candidate: {exception.Message}"; }
     }
@@ -506,6 +532,7 @@ public partial class MainWindow : Window
         else
         {
             _current = null;
+            ClearCameraPreview();
             PreviewImage.Source = null;
             EmptyPreviewTextBlock.Visibility = Visibility.Visible;
             CurrentTextBlock.Text = string.Empty;
@@ -560,11 +587,127 @@ public partial class MainWindow : Window
 
     private void PreviewScroll_SizeChanged(object sender, SizeChangedEventArgs e) { if (_fitToViewport && _current is not null) ApplyFitZoom(); }
 
+    private void CameraExpander_Expanded(object sender, RoutedEventArgs e) => LoadCameraForCurrentArtifact();
+
+    private void CameraExpander_Collapsed(object sender, RoutedEventArgs e)
+    {
+        ClearCameraPreview();
+        CameraStatusTextBlock.Text = string.Empty;
+    }
+
+    private void CameraSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_applyingCameraControls || _cameraSource is null) return;
+        UpdateCameraValueText();
+        ApplyCameraPreview();
+        CameraStatusTextBlock.Text = "Preview only. Re-render the current flame to save the camera.";
+    }
+
+    private void LoadCameraForCurrentArtifact()
+    {
+        if (_current is null)
+        {
+            CameraControlsPanel.IsEnabled = false;
+            CameraStatusTextBlock.Text = "Select a candidate to load its camera.";
+            return;
+        }
+
+        if (string.Equals(_cameraSourcePath, _current.FlamePath, StringComparison.OrdinalIgnoreCase)) return;
+
+        ClearCameraPreview();
+        try
+        {
+            var camera = FlameCamera.From(FlameXmlSerializer.Load(_current.FlamePath));
+            _cameraSource = camera;
+            _cameraSourcePath = _current.FlamePath;
+            _applyingCameraControls = true;
+            try
+            {
+                SetCoordinateSliderValue(CameraCenterXSlider, camera.CenterX);
+                SetCoordinateSliderValue(CameraCenterYSlider, camera.CenterY);
+                CameraScaleSlider.Value = Math.Clamp(camera.Scale, CameraScaleSlider.Minimum, CameraScaleSlider.Maximum);
+                CameraRotationSlider.Value = NormalizeRotation(camera.Rotate);
+                UpdateCameraValueText();
+            }
+            finally { _applyingCameraControls = false; }
+
+            CameraControlsPanel.IsEnabled = true;
+            ApplyCameraPreview();
+            CameraStatusTextBlock.Text = "Loaded saved camera. Changes preview immediately and are not yet saved.";
+        }
+        catch (Exception exception)
+        {
+            CameraControlsPanel.IsEnabled = false;
+            CameraStatusTextBlock.Text = $"Could not load camera: {exception.Message}";
+        }
+    }
+
+    private void ClearCameraPreview()
+    {
+        _cameraSource = null;
+        _cameraSourcePath = null;
+        CameraPreviewTransform.Matrix = Matrix.Identity;
+        CameraControlsPanel.IsEnabled = false;
+    }
+
+    private void ApplyCameraPreview()
+    {
+        if (_cameraSource is not { } source || PreviewImage.ActualWidth <= 0 || PreviewImage.ActualHeight <= 0)
+        {
+            CameraPreviewTransform.Matrix = Matrix.Identity;
+            return;
+        }
+
+        var transform = ReadCameraControls().RelativePreviewFrom(source, PreviewImage.ActualWidth, PreviewImage.ActualHeight);
+        CameraPreviewTransform.Matrix = new Matrix(transform.M11, transform.M12, transform.M21, transform.M22, transform.OffsetX, transform.OffsetY);
+    }
+
+    private FlameCamera? PendingCamera()
+    {
+        if (_cameraSource is not { } source) return null;
+        var pending = ReadCameraControls();
+        return CameraChanged(source, pending) ? pending : null;
+    }
+
+    private FlameCamera ReadCameraControls() => new(
+        CameraCenterXSlider.Value,
+        CameraCenterYSlider.Value,
+        CameraScaleSlider.Value,
+        CameraRotationSlider.Value);
+
+    private void UpdateCameraValueText()
+    {
+        CameraCenterXValueTextBlock.Text = CameraCenterXSlider.Value.ToString("0.00", CultureInfo.InvariantCulture);
+        CameraCenterYValueTextBlock.Text = CameraCenterYSlider.Value.ToString("0.00", CultureInfo.InvariantCulture);
+        CameraScaleValueTextBlock.Text = CameraScaleSlider.Value.ToString("0.##", CultureInfo.InvariantCulture);
+        CameraRotationValueTextBlock.Text = $"{CameraRotationSlider.Value:0.#}°";
+    }
+
+    private static void SetCoordinateSliderValue(Slider slider, double value)
+    {
+        slider.Minimum = Math.Min(-4, Math.Floor(value) - 1);
+        slider.Maximum = Math.Max(4, Math.Ceiling(value) + 1);
+        slider.Value = value;
+    }
+
+    private static bool CameraChanged(FlameCamera source, FlameCamera pending) =>
+        Math.Abs(source.CenterX - pending.CenterX) > 0.000001 ||
+        Math.Abs(source.CenterY - pending.CenterY) > 0.000001 ||
+        Math.Abs(source.Scale - pending.Scale) > 0.000001 ||
+        Math.Abs(NormalizeRotation(source.Rotate - pending.Rotate)) > 0.000001;
+
+    private static double NormalizeRotation(double degrees)
+    {
+        var normalized = degrees % 360d;
+        if (normalized <= -180d) normalized += 360d;
+        if (normalized > 180d) normalized -= 360d;
+        return normalized;
+    }
+
     private void ApplyFitZoom()
     {
         if (_imagePixelWidth <= 0 || _imagePixelHeight <= 0) return;
-        var scale = Math.Min(Math.Max(1, PreviewScroll.ViewportWidth) / _imagePixelWidth, Math.Max(1, PreviewScroll.ViewportHeight) / _imagePixelHeight);
-        ApplyZoom(Math.Clamp(scale, 0.05, 8));
+        ApplyZoom(ViewportZoom.Fit(PreviewScroll.ViewportWidth, PreviewScroll.ViewportHeight, _imagePixelWidth, _imagePixelHeight));
     }
 
     private void ApplyZoom(double requestedScale, WpfPoint? anchor = null)
@@ -573,22 +716,23 @@ public partial class MainWindow : Window
         _applyingZoom = true;
         try
         {
-            var oldScale = Math.Max(0.05, _zoomScale);
+            var oldScale = Math.Max(ViewportZoom.Minimum, _zoomScale);
             var anchorPoint = anchor ?? new WpfPoint(PreviewScroll.ViewportWidth / 2, PreviewScroll.ViewportHeight / 2);
-            var imageOrigin = PreviewImage.TranslatePoint(new WpfPoint(0, 0), PreviewScroll);
+            var imageOrigin = PreviewHost.TranslatePoint(new WpfPoint(0, 0), PreviewScroll);
             var imageX = Math.Clamp((anchorPoint.X - imageOrigin.X) / oldScale, 0, _imagePixelWidth);
             var imageY = Math.Clamp((anchorPoint.Y - imageOrigin.Y) / oldScale, 0, _imagePixelHeight);
-            _zoomScale = Math.Clamp(requestedScale, 0.05, 8);
+            _zoomScale = ViewportZoom.Clamp(requestedScale);
             PreviewImage.Width = _imagePixelWidth * _zoomScale;
             PreviewImage.Height = _imagePixelHeight * _zoomScale;
             PreviewImage.Stretch = Stretch.Fill;
             PreviewScroll.UpdateLayout();
             if (anchor is not null)
             {
-                var newOrigin = PreviewImage.TranslatePoint(new WpfPoint(0, 0), PreviewScroll);
+                var newOrigin = PreviewHost.TranslatePoint(new WpfPoint(0, 0), PreviewScroll);
                 PreviewScroll.ScrollToHorizontalOffset(PreviewScroll.HorizontalOffset + newOrigin.X - (anchorPoint.X - imageX * _zoomScale));
                 PreviewScroll.ScrollToVerticalOffset(PreviewScroll.VerticalOffset + newOrigin.Y - (anchorPoint.Y - imageY * _zoomScale));
             }
+            ApplyCameraPreview();
         }
         finally { _applyingZoom = false; }
     }
@@ -650,7 +794,7 @@ public partial class MainWindow : Window
         var status = _renderService.Status;
         UpdateRenderActionButtons();
         QueueTextBlock.Text = $"Queue: {status.QueueDepth}/{status.QueueCapacity} · ready {status.ReadyCount}\nCompleted: {status.Completed} · failures: {status.Failed}";
-        var sampleProgress = status.ActiveSampleBudget > 0 ? $" · samples {status.ActiveSamples:N0}/{status.ActiveSampleBudget:N0}" : string.Empty;
+        var sampleProgress = status.ActiveSampleBudget > 0 ? $" · samples {GroupedIntegerInput.Format(status.ActiveSamples)}/{GroupedIntegerInput.Format(status.ActiveSampleBudget)}" : string.Empty;
         SessionTextBlock.Text = status.IsRunning ? $"Session: {(status.IsPaused ? "PAUSED" : "RUNNING")} · {status.Elapsed:hh\\:mm\\:ss} · limit {status.BatchLimit}{sampleProgress}" : "Session: idle";
         var ai = _aiService.Status;
         AiStatusTextBlock.Text = $"AI: {(ai.IsRunning ? (ai.IsPaused ? "PAUSED" : "RUNNING") : "idle")} · pending {ai.PendingImages} · scored {ai.ScoredImages} · failures {ai.Failed} · progress {ai.Completed}/{ai.Total}\nModel: {ai.ModelVersion ?? "not trained"} · device {ai.Diagnostics.ActiveDevice}";

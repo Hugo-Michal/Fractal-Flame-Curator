@@ -58,10 +58,12 @@ that Python file beside the executable under Ai/.
 | src/FractalFlameCurator/App.xaml and App.xaml.cs | WPF application entry point and shared dark-theme control resources. |
 | src/FractalFlameCurator/MainWindow.xaml | All visual layout, drawers, controls, and event bindings. |
 | src/FractalFlameCurator/MainWindow.xaml.cs | UI orchestration, status updates, navigation, cancellation, workspace selection, and service lifecycle. Keep UI-only coordination here; move domain behavior to the appropriate module. |
+| src/FractalFlameCurator/FlameRerenderWindow.xaml and .xaml.cs | Independent flame re-render controls, source-preserving preview, and PNG save flow. |
 | src/FractalFlameCurator/Models | In-memory flame, transform, palette, render, scoring, and dataset contracts. VariationRegistry is the supported-variation source of truth. |
 | src/FractalFlameCurator/Generation | Seeded random source, FlameGenerator, SpaceFillingSimplexSampler, and FlameValidator. This owns reproducible valid genomes. |
 | src/FractalFlameCurator/Serialization | FlameXmlSerializer reads and writes the Apophysis-compatible .flame dialect and legacy attributes. |
-| src/FractalFlameCurator/Rendering | CpuFlameRenderer produces deterministic pixels, ToneMapper maps density to color, and ArtifactRerenderer safely replaces an existing PNG. |
+| src/FractalFlameCurator/Rendering | CpuFlameRenderer samples deterministic density/color histograms using seeded CPU streams, ToneMapper maps them to pixels, FlameRenderSession retains them for standalone adjustments, FrameSmoother and ToneCurve process the output, and ArtifactRerenderer safely replaces an existing PNG. |
+| src/FractalFlameCurator/Controls | ToneCurveEditor provides the standalone RGB histogram and draggable master curve; ViewportZoom provides shared fit/zoom bounds. |
 | src/FractalFlameCurator/Storage | SourceArchive writes complete source pairs; RatingStore moves, re-rates, validates, and undoes matched PNG/.flame pairs. |
 | src/FractalFlameCurator/Pipeline | BoundedRenderQueue, ContinuousRenderService, CandidateCatalog, and ContinuousAiScoringService coordinate background work and candidate ordering. |
 | src/FractalFlameCurator/Ai | Dataset snapshot/splitting, C# JSON-lines process client, and the Python DINOv2 service. Keep this boundary independent of manual rendering/rating. |
@@ -79,6 +81,8 @@ MainWindow
   |
   |-- CandidateCatalog <-> SourceArchive + RatingStore
   |-- RatingStore -> ratings/1 through ratings/5
+  |-- FlameRerenderWindow -> FlameRenderSession -> CpuFlameRenderer histogram
+  |                                      '-- ToneMapper -> optional FrameSmoother
   |
   '-- ContinuousAiScoringService
         |-- PreferenceDatasetBuilder <- ratings/1 through ratings/5
@@ -131,8 +135,15 @@ it is metadata, not a candidate.
 ## Core invariants
 
 - A fixed seed and unchanged generation/render settings produce the same genome
-  and pixels. Do not introduce time, unordered iteration, or non-seeded
-  randomness into generation or rendering.
+  and pixels, including a fixed sampling worker count. Parallel streams use
+  deterministic seeds and exact histogram accumulation. Do not introduce time,
+  unordered iteration, or non-seeded randomness into generation or rendering.
+- Sample budgets, serialized quality values, and render progress use 64-bit
+  counts so the supported 20-billion-point limit cannot overflow. Standalone
+  output supports up to 10,000 pixels per side subject to memory and array limits.
+- Standalone image adjustments remap the retained, unmodified sampled histogram;
+  changing camera, output size, sample budget, oversampling, workers, or palette
+  requires sampling again. Loading another source or closing releases the cache.
 - A generated flame is square, defaults to 2048 by 2048, contains a
   256-color palette, has two to twelve valid transforms, and passes
   FlameValidator before serialization or rendering.

@@ -62,9 +62,42 @@
             </StackPanel>
           </Expander>
 
+          <Expander x:Name="CameraExpander" Header="Camera" IsExpanded="False" Margin="0,0,0,6" Expanded="CameraExpander_Expanded" Collapsed="CameraExpander_Collapsed">
+            <StackPanel>
+              <TextBlock Text="Changes preview immediately from the loaded image. Re-render the current flame to save them; closing this drawer discards the preview." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,4" />
+              <StackPanel x:Name="CameraControlsPanel" IsEnabled="False">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="82" /><ColumnDefinition /><ColumnDefinition Width="62" /></Grid.ColumnDefinitions>
+                  <Label Grid.Column="0" Content="Center X" Target="{Binding ElementName=CameraCenterXSlider}" />
+                  <Slider x:Name="CameraCenterXSlider" Grid.Column="1" Minimum="-4" Maximum="4" SmallChange="0.01" LargeChange="0.1" ValueChanged="CameraSlider_ValueChanged" ToolTip="Horizontal saved camera center" AutomationProperties.Name="Camera center X" />
+                  <TextBlock x:Name="CameraCenterXValueTextBlock" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
+                </Grid>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="82" /><ColumnDefinition /><ColumnDefinition Width="62" /></Grid.ColumnDefinitions>
+                  <Label Grid.Column="0" Content="Center Y" Target="{Binding ElementName=CameraCenterYSlider}" />
+                  <Slider x:Name="CameraCenterYSlider" Grid.Column="1" Minimum="-4" Maximum="4" SmallChange="0.01" LargeChange="0.1" ValueChanged="CameraSlider_ValueChanged" ToolTip="Vertical saved camera center" AutomationProperties.Name="Camera center Y" />
+                  <TextBlock x:Name="CameraCenterYValueTextBlock" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
+                </Grid>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="82" /><ColumnDefinition /><ColumnDefinition Width="62" /></Grid.ColumnDefinitions>
+                  <Label Grid.Column="0" Content="Scale" Target="{Binding ElementName=CameraScaleSlider}" />
+                  <Slider x:Name="CameraScaleSlider" Grid.Column="1" Minimum="20" Maximum="400" SmallChange="1" LargeChange="10" ValueChanged="CameraSlider_ValueChanged" ToolTip="Saved camera zoom; larger values show a closer view" AutomationProperties.Name="Camera scale" />
+                  <TextBlock x:Name="CameraScaleValueTextBlock" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
+                </Grid>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="82" /><ColumnDefinition /><ColumnDefinition Width="62" /></Grid.ColumnDefinitions>
+                  <Label Grid.Column="0" Content="Rotation" Target="{Binding ElementName=CameraRotationSlider}" />
+                  <Slider x:Name="CameraRotationSlider" Grid.Column="1" Minimum="-180" Maximum="180" SmallChange="1" LargeChange="15" ValueChanged="CameraSlider_ValueChanged" ToolTip="Saved camera rotation in degrees" AutomationProperties.Name="Camera rotation in degrees" />
+                  <TextBlock x:Name="CameraRotationValueTextBlock" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
+                </Grid>
+              </StackPanel>
+              <TextBlock x:Name="CameraStatusTextBlock" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,0" />
+            </StackPanel>
+          </Expander>
+
           <Expander Header="Image" IsExpanded="False" Margin="0,0,0,6">
             <StackPanel>
-              <TextBlock Text="These settings affect the current viewport only after you re-render. The source .flame file is preserved." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,4" />
+              <TextBlock Text="These settings affect the current viewport only after you re-render. Camera changes, when pending, are then saved to the source .flame." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,4" />
               <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="8" /><ColumnDefinition /></Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0"><Label Content="Sample budget (points)" Target="{Binding ElementName=SampleBudgetTextBox}" /><TextBox x:Name="SampleBudgetTextBox" ToolTip="Number of points used for the render" AutomationProperties.HelpText="Number of points used for the render" /></StackPanel>
@@ -105,6 +138,7 @@
               </Grid>
               <TextBlock Text="Monochrome is the explicit default. Additional palettes are opt-in." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
               <WrapPanel Margin="-2,5,0,0">
+                <Button Content="Open flame re-render tool…" Click="OpenFlameRerenderTool_Click" ToolTip="Load any .flame file, render it with these image settings, and preview or save the PNG" />
                 <Button x:Name="RerenderCurrentButton" Content="Re-render current flame" Click="RerenderCurrent_Click" ToolTip="Render the selected source flame, or cancel while it is running" />
                 <Button x:Name="RerenderRatedButton" Content="Re-render rated flames" Click="RerenderRated_Click" ToolTip="Replace all rated PNGs using the current image settings" />
               </WrapPanel>
@@ -182,8 +216,10 @@
         <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <Border Grid.Row="0" Background="#020304" BorderBrush="#26313D" BorderThickness="1">
           <ScrollViewer x:Name="PreviewScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" PreviewMouseWheel="PreviewScroll_MouseWheel" SizeChanged="PreviewScroll_SizeChanged">
-            <Grid x:Name="PreviewHost">
-              <Image x:Name="PreviewImage" Stretch="Fill" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <Grid x:Name="PreviewHost" ClipToBounds="True">
+              <Image x:Name="PreviewImage" Stretch="Fill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                <Image.RenderTransform><MatrixTransform x:Name="CameraPreviewTransform" /></Image.RenderTransform>
+              </Image>
               <TextBlock x:Name="EmptyPreviewTextBlock" Text="Start rendering or open the output directory to browse candidates" Foreground="#718398" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" />
             </Grid>
           </ScrollViewer>

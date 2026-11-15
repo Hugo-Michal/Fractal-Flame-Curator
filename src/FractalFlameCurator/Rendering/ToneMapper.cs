@@ -4,15 +4,20 @@ namespace FractalFlameCurator.Rendering;
 
 public static class ToneMapper
 {
-    public static byte[] Map(double[] counts, double[] reds, double[] greens, double[] blues, RenderSettings settings, bool monochrome)
+    public static byte[] Map(double[] counts, double[] reds, double[] greens, double[] blues, RenderSettings settings, bool monochrome, CancellationToken cancellationToken = default)
     {
         if (counts.Length != reds.Length || counts.Length != greens.Length || counts.Length != blues.Length)
         {
             throw new ArgumentException("Tone-map channels must have the same length.");
         }
 
+        var densityScale = settings.NormalizeDensityBySampleCount ? 20_000_000d / Math.Max(100, settings.SampleBudget) : 1d;
         var maxLog = 0d;
-        foreach (var count in counts) maxLog = Math.Max(maxLog, LogOnePlus(count));
+        for (var i = 0; i < counts.Length; i++)
+        {
+            if ((i & 65535) == 0) cancellationToken.ThrowIfCancellationRequested();
+            maxLog = Math.Max(maxLog, LogOnePlus(counts[i] * densityScale));
+        }
 
         var pixels = new byte[counts.Length * 4];
         var gamma = Math.Clamp(settings.Gamma, 0.1, 8);
@@ -26,16 +31,13 @@ public static class ToneMapper
 
         for (var i = 0; i < counts.Length; i++)
         {
-            var rawDensity = maxLog <= 0 ? 0 : LogOnePlus(counts[i]) / maxLog;
+            if ((i & 65535) == 0) cancellationToken.ThrowIfCancellationRequested();
+            var rawDensity = maxLog <= 0 ? 0 : LogOnePlus(counts[i] * densityScale) / maxLog;
             var density = rawDensity < lowDensityCutoff
                 ? 0
                 : Math.Clamp((rawDensity - whitePoint) / Math.Max(0.000001, blackPoint - whitePoint), 0, 1);
             density = ApplyContrastCurve(density, contrastCurve);
             var tone = Math.Clamp(Math.Pow(Math.Clamp(density * brightness, 0, 1), 1 / gamma), 0, 1);
-            var averageR = counts[i] == 0 ? 0 : reds[i] / counts[i];
-            var averageG = counts[i] == 0 ? 0 : greens[i] / counts[i];
-            var averageB = counts[i] == 0 ? 0 : blues[i] / counts[i];
-            var luminance = averageR * 0.2126 + averageG * 0.7152 + averageB * 0.0722;
             var offset = i * 4;
             if (monochrome)
             {
@@ -46,6 +48,10 @@ public static class ToneMapper
             }
             else
             {
+                var averageR = counts[i] == 0 ? 0 : reds[i] / counts[i];
+                var averageG = counts[i] == 0 ? 0 : greens[i] / counts[i];
+                var averageB = counts[i] == 0 ? 0 : blues[i] / counts[i];
+                var luminance = averageR * 0.2126 + averageG * 0.7152 + averageB * 0.0722;
                 pixels[offset] = (byte)Math.Clamp(255 - tone * (255 - (averageB * vibrancy + luminance * (1 - vibrancy))), 0, 255);
                 pixels[offset + 1] = (byte)Math.Clamp(255 - tone * (255 - (averageG * vibrancy + luminance * (1 - vibrancy))), 0, 255);
                 pixels[offset + 2] = (byte)Math.Clamp(255 - tone * (255 - (averageR * vibrancy + luminance * (1 - vibrancy))), 0, 255);

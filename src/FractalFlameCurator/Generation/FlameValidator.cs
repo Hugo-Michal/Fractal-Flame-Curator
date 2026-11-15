@@ -9,10 +9,11 @@ public static class FlameValidator
         var errors = new List<string>();
         if (genome.Width <= 0 || genome.Height <= 0) errors.Add("Image dimensions must be positive.");
         if (genome.Width != genome.Height) errors.Add("Phase 1 flames must use a square render.");
+        if (!double.IsFinite(genome.CenterX) || !double.IsFinite(genome.CenterY) || !double.IsFinite(genome.Rotate)) errors.Add("Camera center and rotation must be finite.");
         if (genome.Scale is < 20 or > 400 || !double.IsFinite(genome.Scale)) errors.Add("Camera scale is outside the bounded range.");
         if (genome.Transforms.Count is < 2 or > 12) errors.Add("A flame must contain between 2 and 12 transforms.");
         if (genome.Palette.Colors.Count != 256) errors.Add("A flame palette must contain 256 colors.");
-        if (genome.Oversample is < 1 or > 3) errors.Add("Oversample must be between 1 and 3.");
+        if (genome.Oversample is < 1 or > 6) errors.Add("Oversample must be between 1 and 6.");
         if (genome.Quality < 100) errors.Add("Sample budget is too small to render reliably.");
 
         var totalWeight = 0d;

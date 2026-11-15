@@ -30,8 +30,8 @@ public sealed record ContinuousRenderStatus(
     int Failed,
     int BatchLimit,
     TimeSpan Elapsed,
-    int ActiveSamples,
-    int ActiveSampleBudget);
+    long ActiveSamples,
+    long ActiveSampleBudget);
 
 public sealed class ContinuousRenderService : IAsyncDisposable
 {
@@ -49,8 +49,8 @@ public sealed class ContinuousRenderService : IAsyncDisposable
     private DateTime _started;
     private int _completed;
     private int _failed;
-    private int _activeSamples;
-    private int _activeSampleBudget;
+    private long _activeSamples;
+    private long _activeSampleBudget;
 
     public ContinuousRenderService(FlameGenerator generator, IFlameRenderer renderer)
     {
