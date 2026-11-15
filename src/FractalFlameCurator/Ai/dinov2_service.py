@@ -21,6 +21,7 @@ from typing import Any
 MEAN = (0.485, 0.456, 0.406)
 STD = (0.229, 0.224, 0.225)
 MODEL_NAME = "dinov2_vitb14"
+GPU_BATCH_SIZE = 4
 
 
 def _diagnostics() -> dict[str, Any]:
@@ -138,11 +139,13 @@ class Worker:
     def score(self, paths: list[str]) -> dict[str, Any]:
         if not self.model_version:
             raise RuntimeError("No trained preference model is active. Press Train Model first.")
-        probabilities = self._probabilities(self._features(paths)).detach().cpu().tolist()
         scores = []
-        for path, cumulative in zip(paths, probabilities):
-            expected = max(1.0, min(5.0, 1.0 + sum(max(0.0, min(1.0, value)) for value in cumulative)))
-            scores.append({"Path": path, "ExpectedRating": expected, "Score": max(0.0, min(1.0, (expected - 1.0) / 4.0))})
+        for start in range(0, len(paths), GPU_BATCH_SIZE):
+            batch_paths = paths[start:start + GPU_BATCH_SIZE]
+            probabilities = self._probabilities(self._features(batch_paths)).detach().cpu().tolist()
+            for path, cumulative in zip(batch_paths, probabilities):
+                expected = max(1.0, min(5.0, 1.0 + sum(max(0.0, min(1.0, value)) for value in cumulative)))
+                scores.append({"Path": path, "ExpectedRating": expected, "Score": max(0.0, min(1.0, (expected - 1.0) / 4.0))})
         return {"ModelVersion": self.model_version, "Scores": scores}
 
     def train(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -151,9 +154,11 @@ class Worker:
         train = request.get("train", [])
         all_entries = request.get("images", [])
         feature_cache: dict[str, Any] = {}
-        for entry in all_entries:
-            path = entry["path"]
-            feature_cache[path] = self._features([path]).detach()
+        for start in range(0, len(all_entries), GPU_BATCH_SIZE):
+            entries = all_entries[start:start + GPU_BATCH_SIZE]
+            features = self._features([entry["path"] for entry in entries]).detach()
+            for index, entry in enumerate(entries):
+                feature_cache[entry["path"]] = features[index:index + 1]
         head = OrdinalHead(self.torch, self.dimension).module.to(self.device)
         optimizer = self.torch.optim.AdamW(head.parameters(), lr=0.02, weight_decay=0.001)
         if train:

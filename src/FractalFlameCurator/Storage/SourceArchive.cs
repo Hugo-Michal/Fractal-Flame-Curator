@@ -27,15 +27,21 @@ public sealed class SourceArchive
     public IReadOnlyList<RenderedArtifact> EnumerateArtifacts()
     {
         if (!Directory.Exists(RenderedDirectory)) return [];
-        return Directory.EnumerateFiles(RenderedDirectory, "*.png", SearchOption.TopDirectoryOnly)
-            .Where(IsCompleteCandidate)
-            .Select(path =>
-            {
-                var baseName = Path.GetFileNameWithoutExtension(path);
-                var sourceId = CandidateFileNaming.GetSourceId(baseName);
-                var flamePath = FindMatchingFlamePath(path)!;
-                return new RenderedArtifact(baseName, path, flamePath, 0, ParseSequence(sourceId));
-            })
+        var files = new DirectoryInfo(RenderedDirectory).EnumerateFiles("*", SearchOption.TopDirectoryOnly).ToArray();
+        var flames = files.Where(file => string.Equals(file.Extension, ".flame", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var flamesByName = flames.ToDictionary(file => file.Name, StringComparer.OrdinalIgnoreCase);
+        var fallbackFlames = flames
+            .GroupBy(file => CandidateFileNaming.GetSourceId(file.Name), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(file => file.LastWriteTimeUtc).First(),
+                StringComparer.OrdinalIgnoreCase);
+
+        return files
+            .Where(file => string.Equals(file.Extension, ".png", StringComparison.OrdinalIgnoreCase))
+            .Select(image => CreateArtifact(image, flamesByName, fallbackFlames))
+            .Where(artifact => artifact is not null)
+            .Select(artifact => artifact!)
             .OrderBy(artifact => artifact.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -120,6 +126,28 @@ public sealed class SourceArchive
             if (File.Exists(imageTemp)) File.Delete(imageTemp);
             if (File.Exists(flameTemp)) File.Delete(flameTemp);
         }
+    }
+
+    private static RenderedArtifact? CreateArtifact(
+        FileInfo image,
+        IReadOnlyDictionary<string, FileInfo> flamesByName,
+        IReadOnlyDictionary<string, FileInfo> fallbackFlames)
+    {
+        if (!IsNonEmpty(image)) return null;
+        var sourceId = CandidateFileNaming.GetSourceId(image.Name);
+        var exactFlameName = Path.ChangeExtension(image.Name, ".flame");
+        var flame = flamesByName.GetValueOrDefault(exactFlameName);
+        if (flame is null && !fallbackFlames.TryGetValue(sourceId, out flame)) return null;
+        if (!IsNonEmpty(flame)) return null;
+
+        var baseName = Path.GetFileNameWithoutExtension(image.Name);
+        return new RenderedArtifact(baseName, image.FullName, flame.FullName, 0, ParseSequence(sourceId));
+    }
+
+    private static bool IsNonEmpty(FileInfo file)
+    {
+        try { return file.Length > 0; }
+        catch (IOException) { return false; }
     }
 
     private static int ParseSequence(string sourceId)

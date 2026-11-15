@@ -50,6 +50,59 @@ public sealed class PhaseTwoTests
     }
 
     [Fact]
+    public void RatingMismatchCatalogRanksOnlyPredictionsOutsideTheirStarBands()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var archive = new SourceArchive(root);
+            var ratings = new RatingStore(root);
+            var high = archive.Save(new Generation.FlameGenerator().Generate(101), BlankFrame(), 1);
+            var low = archive.Save(new Generation.FlameGenerator().Generate(102), BlankFrame(), 2);
+            var aligned = archive.Save(new Generation.FlameGenerator().Generate(103), BlankFrame(), 3);
+            ratings.Rate(high.ImagePath, 3);
+            ratings.Rate(low.ImagePath, 3);
+            ratings.Rate(aligned.ImagePath, 1);
+            PrefixRatedPair(root, 3, high.SourceId, 1);
+            PrefixRatedPair(root, 3, low.SourceId, 0);
+            PrefixRatedPair(root, 1, aligned.SourceId, 0.1);
+
+            var mismatches = RatingMismatchCatalog.Build(ratings);
+
+            Assert.Equal([high.SourceId, low.SourceId], mismatches.Select(mismatch => mismatch.Artifact.SourceId));
+            Assert.All(mismatches, mismatch => Assert.Equal(1.5, mismatch.Deviation, 6));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ReRatingPreservesTheScorePrefixAndUndoRestoresTheOriginalRating()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var archive = new SourceArchive(root);
+            var artifact = archive.Save(new Generation.FlameGenerator().Generate(104), BlankFrame(), 1);
+            var ratings = new RatingStore(root);
+            ratings.Rate(artifact.ImagePath, 2);
+            var scoredPath = PrefixRatedPair(root, 2, artifact.SourceId, 0.6);
+
+            ratings.ReRate(scoredPath, 4);
+
+            var movedPath = Path.Combine(root, "ratings", "4", "060000__" + artifact.SourceId + ".png");
+            Assert.True(File.Exists(movedPath));
+            Assert.True(File.Exists(Path.ChangeExtension(movedPath, ".flame")));
+            Assert.Equal(4, ratings.FindRating(movedPath));
+            Assert.True(ratings.Undo());
+
+            Assert.True(File.Exists(scoredPath));
+            Assert.True(File.Exists(Path.ChangeExtension(scoredPath, ".flame")));
+            Assert.Equal(2, ratings.FindRating(scoredPath));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void RatingDatasetSnapshotParsesPngJpgAndJpegFromTheFiveHumanFolders()
     {
         var root = NewTempDirectory();
@@ -205,7 +258,7 @@ public sealed class PhaseTwoTests
     }
 
     [Fact]
-    public async Task RetrainingReplacesModelAndRescoresExistingCandidates()
+    public async Task TrainingReplacesTheModelWithoutScoringExistingCandidates()
     {
         var root = NewTempDirectory();
         try
@@ -216,14 +269,34 @@ public sealed class PhaseTwoTests
             var ratings = new RatingStore(root);
             await using var service = new ContinuousAiScoringService(backend);
             await service.InitializeAsync();
-            service.Start(root, ratings);
-            await WaitUntil(() => service.Status.Completed >= 1);
             var snapshot = new DatasetSnapshot(root, [], DatasetStatistics.FromCounts(new Dictionary<int, int>()), new DatasetSplit([], [], [], false), DateTimeOffset.UtcNow);
             var result = await service.TrainAsync(snapshot, Path.Combine(root, "models"));
             Assert.Equal("model-two", result.ModelVersion);
-            Assert.True(File.Exists(Path.Combine(root, "rendered", "091000__" + candidate.SourceId + ".png")));
-            Assert.True(File.Exists(Path.Combine(root, "rendered", "091000__" + candidate.SourceId + ".flame")));
-            Assert.Equal("model-two", service.Scores[candidate.SourceId].ModelVersion);
+            Assert.True(File.Exists(candidate.ImagePath));
+            Assert.True(File.Exists(candidate.FlamePath));
+            Assert.Empty(service.Scores);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task RatedDatasetRescoreUsesBoundedGpuBatches()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var ratings = new RatingStore(root);
+            var ratingDirectory = Path.Combine(root, "ratings", "5");
+            Directory.CreateDirectory(ratingDirectory);
+            for (var index = 0; index < 5; index++) BlankFrame().SavePng(Path.Combine(ratingDirectory, $"legacy-{index}.png"));
+            var backend = new FakeBackend(0.5, "model-one");
+            await using var service = new ContinuousAiScoringService(backend);
+            await service.InitializeAsync();
+
+            var count = await service.RescoreRatedAsync(ratings);
+
+            Assert.Equal(5, count);
+            Assert.Equal(new[] { 4, 1 }, backend.ScoreBatchSizes);
         }
         finally { Directory.Delete(root, true); }
     }
@@ -287,6 +360,69 @@ public sealed class PhaseTwoTests
     }
 
     [Fact]
+    public void CandidateCatalogRanksScoredCandidatesAndTracksRenamedPairs()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var archive = new SourceArchive(root);
+            var generator = new Generation.FlameGenerator();
+            var low = archive.Save(generator.Generate(51), BlankFrame(), 1);
+            var high = archive.Save(generator.Generate(52), BlankFrame(), 2);
+            var unscored = archive.Save(generator.Generate(53), BlankFrame(), 3);
+            var catalog = new CandidateCatalog();
+            catalog.Refresh(archive, new RatingStore(root));
+
+            var lowImagePath = Path.Combine(Path.GetDirectoryName(low.ImagePath)!, CandidateFileNaming.WithScorePrefix(Path.GetFileName(low.ImagePath), 0.2));
+            var lowFlamePath = Path.Combine(Path.GetDirectoryName(low.FlamePath)!, CandidateFileNaming.WithScorePrefix(Path.GetFileName(low.FlamePath), 0.2));
+            File.Move(low.ImagePath, lowImagePath);
+            File.Move(low.FlamePath, lowFlamePath);
+            var highImagePath = Path.Combine(Path.GetDirectoryName(high.ImagePath)!, CandidateFileNaming.WithScorePrefix(Path.GetFileName(high.ImagePath), 0.9));
+            var highFlamePath = Path.Combine(Path.GetDirectoryName(high.FlamePath)!, CandidateFileNaming.WithScorePrefix(Path.GetFileName(high.FlamePath), 0.9));
+            File.Move(high.ImagePath, highImagePath);
+            File.Move(high.FlamePath, highFlamePath);
+
+            catalog.RecordScore(new PreferenceScore(lowImagePath, low.SourceId, 0.2, 1.8, "model"));
+            catalog.RecordScore(new PreferenceScore(highImagePath, high.SourceId, 0.9, 4.6, "model"));
+
+            var ranked = catalog.Ordered(true);
+            Assert.Equal([high.SourceId, low.SourceId, unscored.SourceId], ranked.Select(artifact => artifact.SourceId));
+            Assert.Equal(highImagePath, ranked[0].ImagePath);
+            Assert.Equal(highFlamePath, ranked[0].FlamePath);
+            Assert.Equal(high.SourceId, catalog.FirstUnseen(true, new HashSet<string>(StringComparer.OrdinalIgnoreCase))!.SourceId);
+
+            var resumedCatalog = new CandidateCatalog();
+            resumedCatalog.Refresh(new SourceArchive(root), new RatingStore(root));
+            Assert.Equal([high.SourceId, low.SourceId, unscored.SourceId], resumedCatalog.Ordered(true).Select(artifact => artifact.SourceId));
+
+            Assert.True(catalog.Remove(high.SourceId));
+            Assert.DoesNotContain(catalog.Ordered(true), artifact => artifact.SourceId == high.SourceId);
+            catalog.Upsert(high with { BaseName = Path.GetFileNameWithoutExtension(highImagePath), ImagePath = highImagePath, FlamePath = highFlamePath });
+            Assert.Equal(high.SourceId, catalog.Ordered(true)[0].SourceId);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void CandidateCatalogFindsPersistedUnratedCandidatesInANewWorkspaceSession()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var sourceArchive = new SourceArchive(root);
+            var saved = sourceArchive.Save(new Generation.FlameGenerator().Generate(44), BlankFrame(), 1);
+
+            var resumedCatalog = new CandidateCatalog();
+            resumedCatalog.Refresh(new SourceArchive(root), new RatingStore(root));
+
+            var candidate = resumedCatalog.FirstUnseen(false, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            Assert.NotNull(candidate);
+            Assert.Equal(saved.SourceId, candidate!.SourceId);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void CandidateCatalogNextUnseenDoesNotFallBackToAnAlreadySeenCandidate()
     {
         var root = NewTempDirectory();
@@ -326,6 +462,18 @@ public sealed class PhaseTwoTests
 
     private static RenderedFrame BlankFrame() => new(8, 8, Enumerable.Repeat((byte)255, 8 * 8 * 4).ToArray());
 
+    private static string PrefixRatedPair(string root, int rating, string sourceId, double score)
+    {
+        var directory = Path.Combine(root, "ratings", rating.ToString());
+        var imagePath = Path.Combine(directory, sourceId + ".png");
+        var flamePath = Path.ChangeExtension(imagePath, ".flame");
+        var scoredImagePath = Path.Combine(directory, CandidateFileNaming.WithScorePrefix(Path.GetFileName(imagePath), score));
+        var scoredFlamePath = Path.Combine(directory, CandidateFileNaming.WithScorePrefix(Path.GetFileName(flamePath), score));
+        File.Move(imagePath, scoredImagePath);
+        File.Move(flamePath, scoredFlamePath);
+        return scoredImagePath;
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -348,12 +496,14 @@ public sealed class PhaseTwoTests
         public FakeBackend(double score, string version) { _score = score; _version = version; }
         public string? NextTrainingVersion { get; set; }
         public double ScoreAfterTraining { get; set; }
+        public List<int> ScoreBatchSizes { get; } = [];
         public DeviceDiagnostics Diagnostics { get; private set; } = new(true, true, true, "Test GPU", "test", "cuda:0", true, "test backend");
         public string? ActiveModelVersion => _version;
         public Task<DeviceDiagnostics> GetDiagnosticsAsync(CancellationToken cancellationToken) => Task.FromResult(Diagnostics);
 
         public Task<IReadOnlyList<PreferenceScore>> ScoreAsync(IReadOnlyList<string> imagePaths, CancellationToken cancellationToken)
         {
+            ScoreBatchSizes.Add(imagePaths.Count);
             var scores = imagePaths.Select(path => new PreferenceScore(path, CandidateFileNaming.GetSourceId(Path.GetFileName(path)), _score, 1 + _score * 4, _version)).ToArray();
             return Task.FromResult<IReadOnlyList<PreferenceScore>>(scores);
         }

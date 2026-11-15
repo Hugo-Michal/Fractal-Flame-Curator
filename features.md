@@ -204,8 +204,11 @@ below five percent so large images can fit in a small viewport.
 
 ### Rating and navigation
 
-The central viewport shows one ready candidate at a time. The user can assign
-1 through 5 stars, skip to the next candidate, or navigate previous/next.
+The central viewport shows one ready candidate at a time. When the application
+opens, it loads the first eligible candidate already in the selected
+workspace's rendered folder, so rating can resume without starting a new render
+session. The user can assign 1 through 5 stars, skip to the next candidate, or
+navigate previous/next.
 The Rendering controls include an optional copy mode. The default moves (cuts)
 the matched PNG and .flame pair into the selected rating folder; copy mode
 leaves the rendered pair in place and copies both files into that folder. In
@@ -220,16 +223,48 @@ candidates) and does not fall back to an already-seen alphabetical candidate;
 Previous can still revisit candidates already shown. The seen memory starts
 fresh when the application is restarted. Keyboard shortcuts are 1–5 for
 ratings, Left/Right Arrow for previous/next, U for undo, P for pause/resume,
-and Escape to stop rendering.
+and Escape to stop rendering. Shortcuts do not apply while an editable text
+field has focus, so text and numeric values can be entered normally.
+
+While AI scoring is enabled, Next selects the highest-scored unseen candidate.
+Candidates without an AI score follow scored candidates and retain descending
+source-ID order. A newly received AI score updates the candidate's paths and
+rank without replacing a different image already being judged.
 
 ### Optional AI Scoring drawer
 
 The application displays Python, PyTorch, CUDA, GPU, active-device, and model
-diagnostics. Buttons start/stop scoring, train a model, and rescore the rated
-dataset. Directly beneath them, the UI displays the exact selected-workspace
+diagnostics. One Start AI scoring / Stop AI scoring toggle explicitly controls
+candidate scoring. Train Model trains only and never starts scoring or renames
+rendered candidates. Its button becomes Cancel training while training is
+active. The user starts scoring after a successful training run with the toggle.
+Directly beneath the buttons, the UI displays the exact selected-workspace
 ratings/1–5 path that Train Model will read. A missing or unsuitable
 Python/CUDA setup disables only AI functions; manual rendering and rating stay
 available.
+
+### Rating adjustment drawer
+
+Rating adjustment contains Rescore rated and Review mismatches. Rescore rated
+updates score prefixes for rated PNG, JPG, and JPEG images without moving them.
+Review mismatches works only with complete rated PNG/.flame pairs that already
+carry a score prefix; legacy image-only dataset entries remain trainable but
+cannot be moved as flame pairs and are not shown.
+
+The review list converts the hidden 0–1 AI score to its expected 1–5-star value
+and orders only predictions outside the current human-rating band, largest
+deviation first. The bands are 1★ = 1.0–1.5, 2★ = 1.5–2.5, 3★ = 2.5–3.5,
+4★ = 3.5–4.5, and 5★ = 4.5–5.0. The review UI never displays an AI score,
+expected rating, or mismatch magnitude; it shows the flame and lets the human
+use the existing 1–5 star buttons or keyboard shortcuts to confirm or move its
+rating. Re-rating moves the matched pair between star folders while preserving
+its hidden score prefix; Undo restores the previous folder and prefix.
+
+Starting a review stops AI scoring first and keeps it stopped until Finish
+review. Training, rated rescoring, and starting AI scoring are unavailable
+during a review; Review mismatches and Rescore rated are unavailable during
+training. Continuous rendering remains available, while bulk re-rendering of
+rated flames is unavailable during review.
 
 ## Manual generation and rendering flow
 
@@ -339,19 +374,23 @@ candidate.
 
 For a new rating, each ratings/N directory contains only matched PNG/.flame
 pairs. The storage layer moves both files through temporary names and rolls the
-pair back if publication fails. Re-rating moves the same pair to the new star
-folder and removes stale duplicate copies. Undo restores it to rendered/ or
-the former star folder. The application can read legacy PNG-, JPG-, or
-JPEG-only rated images for AI dataset compatibility, but it must not create new
-unpaired ratings.
+pair back if publication fails. New manual ratings remove any score prefix.
+Rating-adjustment re-rating moves the same pair to the new star folder while
+preserving its score prefix, and Undo restores the former star folder and
+prefix. The application can read legacy PNG-, JPG-, or JPEG-only rated images
+for AI dataset compatibility, but it must not create new unpaired ratings.
 
 ## Candidate catalog and ordering
 
 CandidateCatalog excludes source IDs already present in a rating folder. It
 groups duplicate legacy IDs and picks the most recently written complete pair
-deterministically. With AI disabled, candidates are ordered by source ID in
-ascending order. With AI enabled, they are ordered by source ID in descending
-order; stored AI scores remain visible but do not change the viewport order.
+deterministically. It builds from one background metadata scan when the
+workspace opens, then keeps the session catalog current from known render,
+rating, undo, and AI-score events. With AI disabled, candidates are ordered by
+source ID in ascending order. With AI enabled, scored candidates are ordered by
+score descending and source ID descending for ties; unscored candidates follow
+in source-ID-descending order. Score-prefixed file names are persistence
+metadata, while the stable source ID remains the catalog identity.
 
 ## AI preference scoring
 
@@ -370,10 +409,12 @@ continuous score is:
 (expected rating - 1) / 4
 ~~~
 
-Scores range from zero to one. The service watches rendered complete pairs and
-also performs a low-frequency fallback scan. It prefixes the rendered PNG and
-matching .flame with the fixed-width score, then stores the score in the
-catalog. Low scores are retained; AI does not discard candidates.
+Scores range from zero to one. When the user starts AI scoring, the service
+watches rendered complete pairs and also performs a low-frequency fallback
+scan. It scores and publishes candidates in fixed batches of four so GPU memory
+use remains bounded and each finished batch promptly prefixes the rendered PNG
+and matching .flame with the fixed-width score before updating the catalog. Low
+scores are retained; AI does not discard candidates.
 
 Training snapshots only ratings/1 through ratings/5. It groups images by stable
 source ID before assigning deterministic train, validation, and test splits to
@@ -384,13 +425,15 @@ metrics are explicitly unreliable.
 
 Controls are PNG files under controls/<name>/. They are evaluated only and
 never added to human labels. Trained heads are stored under
-LocalAppData/FractalFlameCurator/models. Starting a new AI session rescans
-existing rendered candidates; retraining replaces the active model and
-rescoring uses the replacement.
+LocalAppData/FractalFlameCurator/models. Training extracts frozen DINOv2
+features in fixed GPU batches of four and replaces the active model without
+rescoring rendered candidates. Starting a new AI scoring session then rescans
+existing rendered candidates and scores them with that replacement.
 
-Rated-dataset rescoring is deliberately separate: it scores every rated PNG,
-JPG, or JPEG, including legacy image-only entries, and updates score prefixes
-without moving, deleting, or changing the star folders.
+Rated-dataset rescoring is deliberately separate in the Rating adjustment
+drawer: it scores every rated PNG, JPG, or JPEG, including legacy image-only
+entries, and updates score prefixes without moving, deleting, or changing the
+star folders.
 
 ## Reliability and acceptance behavior
 

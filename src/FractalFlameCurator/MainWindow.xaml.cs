@@ -55,6 +55,12 @@ public partial class MainWindow : Window
     private Task? _activeRatedRerender;
     private CancellationTokenSource? _ratedRescoreCancellation;
     private Task? _activeRatedRescore;
+    private CancellationTokenSource? _trainingCancellation;
+    private Task? _activeTraining;
+    private List<RatingMismatch>? _ratingMismatches;
+    private int _ratingMismatchIndex;
+    private int _ratingMismatchTotal;
+    private bool _loadingRatingMismatches;
     private readonly DispatcherTimer _statusTimer;
 
     public MainWindow()
@@ -100,6 +106,19 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        try
+        {
+            IsEnabled = false;
+            EnsureWorkspace(refreshCandidates: false);
+            await RefreshCandidatesAsync();
+            if (_catalog.FirstUnseen(_aiEnabled, GetSeenSourceIds()) is { } candidate) ShowArtifact(candidate);
+        }
+        catch (Exception exception)
+        {
+            CurrentTextBlock.Text = $"Could not load rendered candidates: {exception.Message}";
+        }
+        finally { IsEnabled = true; }
+
         try
         {
             var diagnostics = await _aiService.InitializeAsync();
@@ -211,7 +230,6 @@ public partial class MainWindow : Window
             await _artifactRerenderer.RerenderAsync(artifact, palette, settings, progress, cancellation.Token, camera);
             await _aiService.InvalidateAsync(artifact.SourceId);
             _catalog.ClearScore(artifact.SourceId);
-            RefreshCandidates();
             ClearCameraPreview();
             ShowArtifact(artifact);
             ImageSettingsStatusTextBlock.Text = camera is null
@@ -235,6 +253,11 @@ public partial class MainWindow : Window
 
     private async void RerenderRated_Click(object sender, RoutedEventArgs e)
     {
+        if (_ratingMismatches is not null)
+        {
+            ImageSettingsStatusTextBlock.Text = "Finish rating adjustment before re-rendering rated flames.";
+            return;
+        }
         if (_activeRatedRerender is not null)
         {
             _ratedRerenderCancellation?.Cancel();
@@ -370,23 +393,50 @@ public partial class MainWindow : Window
         UpdateRenderActionButtons();
     }
 
-    private void StartAi_Click(object sender, RoutedEventArgs e)
+    private async void StartStopAi_Click(object sender, RoutedEventArgs e)
     {
+        if (_ratingMismatches is not null)
+        {
+            AiStatusTextBlock.Text = "Finish rating adjustment before starting AI scoring.";
+            return;
+        }
+        if (_aiService.Status.IsTraining || _activeRatedRescore is not null)
+        {
+            AiStatusTextBlock.Text = "Wait for training or rated rescoring to finish before changing AI scoring.";
+            return;
+        }
+
         try
         {
-            EnsureWorkspace();
-            _aiService.Start(OutputDirectoryTextBox.Text.Trim(), _ratingStore!);
-            _aiEnabled = true;
-            RefreshCandidates();
-            ShowNextReady();
+            if (_aiService.Status.IsRunning)
+            {
+                await _aiService.StopAsync();
+                _aiEnabled = false;
+            }
+            else
+            {
+                EnsureWorkspace();
+                _aiService.Start(OutputDirectoryTextBox.Text.Trim(), _ratingStore!);
+                _aiEnabled = true;
+                ShowNextReady();
+            }
         }
-        catch (Exception exception) { WpfMessageBox.Show(this, exception.Message, "Could not start AI scoring", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        catch (Exception exception) { WpfMessageBox.Show(this, exception.Message, "Could not change AI scoring", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        finally { UpdateAiControls(); }
     }
-
-    private async void StopAi_Click(object sender, RoutedEventArgs e) { await _aiService.StopAsync(); _aiEnabled = false; }
 
     private async void RescoreRatedDataset_Click(object sender, RoutedEventArgs e)
     {
+        if (_ratingMismatches is not null)
+        {
+            RatingAdjustmentStatusTextBlock.Text = "Finish rating adjustment before rescoring the rated dataset.";
+            return;
+        }
+        if (_aiService.Status.IsRunning)
+        {
+            RatingAdjustmentStatusTextBlock.Text = "Stop AI scoring before rescoring the rated dataset.";
+            return;
+        }
         if (_activeRatedRescore is not null)
         {
             _ratedRescoreCancellation?.Cancel();
@@ -402,7 +452,7 @@ public partial class MainWindow : Window
         _activeRatedRescore = RescoreRatedDatasetAsync();
         try { await _activeRatedRescore; }
         catch (Exception exception) { AiStatusTextBlock.Text = $"Rated dataset rescore failed: {exception.Message}"; }
-        finally { _activeRatedRescore = null; }
+        finally { _activeRatedRescore = null; UpdateAiControls(); }
     }
 
     private async Task RescoreRatedDatasetAsync()
@@ -439,23 +489,108 @@ public partial class MainWindow : Window
         {
             if (ReferenceEquals(_ratedRescoreCancellation, cancellation)) _ratedRescoreCancellation = null;
             RescoreRatedDatasetButton.Content = "Rescore rated";
+            UpdateAiControls();
         }
     }
 
     private async void TrainModel_Click(object sender, RoutedEventArgs e)
     {
+        if (_activeTraining is not null)
+        {
+            _trainingCancellation?.Cancel();
+            return;
+        }
+
+        if (_ratingMismatches is not null)
+        {
+            TrainingMetricsTextBlock.Text = "Finish rating adjustment before training a new model.";
+            return;
+        }
+        if (_activeRatedRescore is not null)
+        {
+            TrainingMetricsTextBlock.Text = "Finish rated-dataset rescoring before training a new model.";
+            return;
+        }
+
         try
         {
             EnsureWorkspace();
             var snapshot = PreferenceDatasetBuilder.Snapshot(OutputDirectoryTextBox.Text.Trim());
             UpdateDatasetStatistics(snapshot.Statistics);
-            if (!_aiService.Status.IsRunning) _aiService.Start(OutputDirectoryTextBox.Text.Trim(), _ratingStore!);
-            _aiEnabled = true;
-            TrainingMetricsTextBlock.Text = "Training on the frozen DINOv2 backbone… rendering remains operational.";
-            var training = await _aiService.TrainAsync(snapshot, _aiBackend.ModelDirectory);
+            using var cancellation = new CancellationTokenSource();
+            _trainingCancellation = cancellation;
+            TrainModelButton.Content = "Cancel training";
+            _aiEnabled = false;
+            TrainingMetricsTextBlock.Text = $"Training from {snapshot.Statistics.Total} rated image(s)… rendered candidates will not be scored until Start AI scoring is clicked.";
+            var trainingTask = _aiService.TrainAsync(snapshot, _aiBackend.ModelDirectory, cancellation.Token);
+            _activeTraining = trainingTask;
+            var training = await trainingTask;
             UpdateTrainingMetrics(training);
         }
+        catch (OperationCanceledException) when (_trainingCancellation?.IsCancellationRequested == true)
+        {
+            TrainingMetricsTextBlock.Text = "Training cancelled. Rendered candidates were not scored.";
+        }
         catch (Exception exception) { WpfMessageBox.Show(this, exception.Message, "Could not train preference model", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally
+        {
+            _trainingCancellation = null;
+            _activeTraining = null;
+            TrainModelButton.Content = "Train Model";
+            UpdateAiControls();
+        }
+    }
+
+    private async void StartStopRatingAdjustment_Click(object sender, RoutedEventArgs e)
+    {
+        if (_loadingRatingMismatches) return;
+        if (_ratingMismatches is not null)
+        {
+            FinishRatingAdjustment();
+            return;
+        }
+        if (_aiService.Status.IsTraining || _activeRatedRescore is not null)
+        {
+            RatingAdjustmentStatusTextBlock.Text = "Wait for training or rated rescoring to finish before reviewing mismatches.";
+            return;
+        }
+
+        _loadingRatingMismatches = true;
+        StartStopRatingAdjustmentButton.IsEnabled = false;
+        try
+        {
+            EnsureWorkspace();
+            if (_aiService.Status.IsRunning)
+            {
+                RatingAdjustmentStatusTextBlock.Text = "Stopping AI scoring before loading rating mismatches…";
+                await _aiService.StopAsync();
+                _aiEnabled = false;
+            }
+
+            _ratingMismatches = (await Task.Run(() => RatingMismatchCatalog.Build(_ratingStore!))).ToList();
+            _ratingMismatchIndex = 0;
+            _ratingMismatchTotal = _ratingMismatches.Count;
+            _lastRated = null;
+            if (_ratingMismatches.Count == 0)
+            {
+                _ratingMismatches = null;
+                RatingAdjustmentStatusTextBlock.Text = "No rated flame pairs have an out-of-range AI prediction. Use Rescore rated after training to refresh the review list.";
+                return;
+            }
+
+            RatingAdjustmentStatusTextBlock.Text = $"Loaded {_ratingMismatchTotal} mismatches. AI scoring is paused during review.";
+            ShowRatingAdjustmentCurrent();
+        }
+        catch (Exception exception)
+        {
+            _ratingMismatches = null;
+            WpfMessageBox.Show(this, exception.Message, "Could not load rating mismatches", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _loadingRatingMismatches = false;
+            UpdateAiControls();
+        }
     }
 
     private void RenderService_ImageReady(RenderedArtifact artifact)
@@ -463,7 +598,7 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             while (_renderService.TryDequeueReady(out _)) { }
-            RefreshCandidates();
+            _catalog.Upsert(artifact);
             if (_current is null) ShowNextReady();
         });
     }
@@ -474,11 +609,11 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            _catalog.RecordScore(score);
-            if (_current is not null && string.Equals(_current.SourceId, score.SourceId, StringComparison.OrdinalIgnoreCase))
+            if (_ratingMismatches is not null) return;
+            var scoredArtifact = _catalog.RecordScore(score);
+            if (scoredArtifact is not null && _current is not null && string.Equals(_current.SourceId, score.SourceId, StringComparison.OrdinalIgnoreCase))
             {
-                _current = _current with { BaseName = Path.GetFileNameWithoutExtension(score.ImagePath), ImagePath = score.ImagePath };
-                ShowArtifact(_current);
+                ShowArtifact(scoredArtifact);
             }
             else if (_current is null) ShowNextReady();
         });
@@ -518,9 +653,13 @@ public partial class MainWindow : Window
 
     private void ShowNextReady()
     {
-        RefreshCandidates();
+        if (_ratingMismatches is not null)
+        {
+            ShowRatingAdjustmentCurrent();
+            return;
+        }
         var seenSourceIds = GetSeenSourceIds();
-        var next = _current is null
+        var next = _aiEnabled || _current is null
             ? _catalog.FirstUnseen(_aiEnabled, seenSourceIds)
             : _catalog.NextUnseen(_current.SourceId, _aiEnabled, seenSourceIds);
         if (_deferredAfterUndo is { } deferred)
@@ -541,33 +680,121 @@ public partial class MainWindow : Window
 
     private void Previous_Click(object sender, RoutedEventArgs e)
     {
-        RefreshCandidates();
+        if (_ratingMismatches is not null)
+        {
+            if (_ratingMismatchIndex > 0) _ratingMismatchIndex--;
+            else if (_ratingMismatches.Count > 0) _ratingMismatchIndex = _ratingMismatches.Count - 1;
+            ShowRatingAdjustmentCurrent();
+            return;
+        }
         if (_current is not null && _catalog.Adjacent(_current.SourceId, -1, _aiEnabled) is { } previous) ShowArtifact(previous);
     }
 
-    private void Next_Click(object sender, RoutedEventArgs e) => ShowNextReady();
+    private void Next_Click(object sender, RoutedEventArgs e)
+    {
+        if (_ratingMismatches is not null)
+        {
+            if (_ratingMismatchIndex < _ratingMismatches.Count) _ratingMismatchIndex++;
+            ShowRatingAdjustmentCurrent();
+            return;
+        }
+        ShowNextReady();
+    }
 
     private void Rating_Click(object sender, RoutedEventArgs e)
     {
         if (_current is null || _ratingStore is null) return;
         var rating = int.Parse(((WpfButton)sender).Tag.ToString()!, CultureInfo.InvariantCulture);
+        if (_ratingMismatches is not null)
+        {
+            AdjustCurrentRating(rating);
+            return;
+        }
         try
         {
             var current = ResolveCurrentArtifact();
             _ratingStore.Rate(current.ImagePath, rating, CopyRatedFilesCheckBox.IsChecked == true);
             _lastRated = current;
+            _catalog.Remove(current.SourceId);
             RefreshWorkspaceStatistics();
             ShowNextReady();
         }
         catch (Exception exception) { WpfMessageBox.Show(this, exception.Message, "Could not save rating", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
-    private void Skip_Click(object sender, RoutedEventArgs e) => ShowNextReady();
+    private void AdjustCurrentRating(int rating)
+    {
+        if (_ratingMismatches is null || _ratingStore is null || _ratingMismatchIndex >= _ratingMismatches.Count) return;
+        try
+        {
+            var mismatch = _ratingMismatches[_ratingMismatchIndex];
+            if (_ratingStore.FindRating(mismatch.Artifact.ImagePath) != rating)
+            {
+                _ratingStore.ReRate(mismatch.Artifact.ImagePath, rating);
+                _lastRated = mismatch.Artifact;
+            }
+            else _lastRated = null;
+
+            _ratingMismatches.RemoveAt(_ratingMismatchIndex);
+            RefreshWorkspaceStatistics();
+            ShowRatingAdjustmentCurrent();
+        }
+        catch (Exception exception) { WpfMessageBox.Show(this, exception.Message, "Could not adjust rating", MessageBoxButton.OK, MessageBoxImage.Error); }
+    }
+
+    private void ShowRatingAdjustmentCurrent()
+    {
+        if (_ratingMismatches is null) return;
+        if (_ratingMismatchIndex < _ratingMismatches.Count)
+        {
+            ShowArtifact(_ratingMismatches[_ratingMismatchIndex].Artifact);
+            RatingAdjustmentStatusTextBlock.Text = $"Reviewing mismatch {Math.Min(_ratingMismatchIndex + 1, _ratingMismatchTotal)} of {_ratingMismatchTotal}. AI score hidden.";
+            return;
+        }
+
+        _current = null;
+        PreviewImage.Source = null;
+        EmptyPreviewTextBlock.Visibility = Visibility.Visible;
+        CurrentTextBlock.Text = "Rating adjustment · review complete";
+        RatingAdjustmentStatusTextBlock.Text = "All loaded mismatches were reviewed. Select Finish review to return to regular candidate browsing.";
+    }
+
+    private void FinishRatingAdjustment()
+    {
+        _ratingMismatches = null;
+        _ratingMismatchIndex = 0;
+        _ratingMismatchTotal = 0;
+        _lastRated = null;
+        RatingAdjustmentStatusTextBlock.Text = "Rating adjustment finished. Start AI scoring or rescore rated when ready.";
+        UpdateAiControls();
+        ShowNextReady();
+    }
+
+    private void UndoRatingAdjustment()
+    {
+        if (_lastRated is null || _ratingStore?.Undo() != true) return;
+        var sourceId = _lastRated.SourceId;
+        _ratingMismatches = RatingMismatchCatalog.Build(_ratingStore).ToList();
+        _ratingMismatchTotal = _ratingMismatches.Count;
+        _ratingMismatchIndex = _ratingMismatches.FindIndex(mismatch => string.Equals(mismatch.Artifact.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+        if (_ratingMismatchIndex < 0) _ratingMismatchIndex = 0;
+        _lastRated = null;
+        RefreshWorkspaceStatistics();
+        ShowRatingAdjustmentCurrent();
+    }
+
+    private void Skip_Click(object sender, RoutedEventArgs e) => Next_Click(sender, e);
 
     private void Undo_Click(object sender, RoutedEventArgs e)
     {
+        if (_ratingMismatches is not null)
+        {
+            UndoRatingAdjustment();
+            return;
+        }
         if (_lastRated is null || _ratingStore?.Undo() != true) return;
         _deferredAfterUndo = _current;
+        _catalog.Upsert(_lastRated);
         ShowArtifact(_lastRated);
         _lastRated = null;
         RefreshWorkspaceStatistics();
@@ -772,6 +999,8 @@ public partial class MainWindow : Window
 
     private void Window_KeyDown(object sender, WpfKeyEventArgs e)
     {
+        if (Keyboard.FocusedElement is WpfTextBox) return;
+
         var rating = e.Key switch
         {
             Key.D1 or Key.NumPad1 => 1,
@@ -797,7 +1026,9 @@ public partial class MainWindow : Window
         var sampleProgress = status.ActiveSampleBudget > 0 ? $" · samples {GroupedIntegerInput.Format(status.ActiveSamples)}/{GroupedIntegerInput.Format(status.ActiveSampleBudget)}" : string.Empty;
         SessionTextBlock.Text = status.IsRunning ? $"Session: {(status.IsPaused ? "PAUSED" : "RUNNING")} · {status.Elapsed:hh\\:mm\\:ss} · limit {status.BatchLimit}{sampleProgress}" : "Session: idle";
         var ai = _aiService.Status;
-        AiStatusTextBlock.Text = $"AI: {(ai.IsRunning ? (ai.IsPaused ? "PAUSED" : "RUNNING") : "idle")} · pending {ai.PendingImages} · scored {ai.ScoredImages} · failures {ai.Failed} · progress {ai.Completed}/{ai.Total}\nModel: {ai.ModelVersion ?? "not trained"} · device {ai.Diagnostics.ActiveDevice}";
+        var aiState = ai.IsTraining ? "TRAINING" : ai.IsRunning ? (ai.IsPaused ? "PAUSED" : "RUNNING") : "idle";
+        AiStatusTextBlock.Text = $"AI: {aiState} · pending {ai.PendingImages} · scored {ai.ScoredImages} · failures {ai.Failed} · progress {ai.Completed}/{ai.Total}\nModel: {ai.ModelVersion ?? "not trained"} · device {ai.Diagnostics.ActiveDevice}";
+        UpdateAiControls();
     }
 
     private async void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -811,6 +1042,7 @@ public partial class MainWindow : Window
         _rerenderCancellation?.Cancel();
         _ratedRerenderCancellation?.Cancel();
         _ratedRescoreCancellation?.Cancel();
+        _trainingCancellation?.Cancel();
         if (_activeRerender is not null)
         {
             try { await _activeRerender; } catch (Exception) { }
@@ -823,21 +1055,26 @@ public partial class MainWindow : Window
         {
             try { await _activeRatedRescore; } catch (Exception) { }
         }
+        if (_activeTraining is not null)
+        {
+            try { await _activeTraining; } catch (Exception) { }
+        }
         await _renderService.DisposeAsync();
         await _aiService.DisposeAsync();
         Close();
     }
 
-    private void EnsureWorkspace()
+    private void EnsureWorkspace(bool refreshCandidates = true)
     {
         var output = Path.GetFullPath(OutputDirectoryTextBox.Text.Trim());
         _workspacePreferenceStore.Save(output);
-        if (_archive is null || _ratingStore is null || !string.Equals(_archive.RootDirectory, output, StringComparison.OrdinalIgnoreCase))
+        var workspaceChanged = _archive is null || _ratingStore is null || !string.Equals(_archive.RootDirectory, output, StringComparison.OrdinalIgnoreCase);
+        if (workspaceChanged)
         {
             _archive = new SourceArchive(output);
             _ratingStore = new RatingStore(output);
         }
-        RefreshCandidates();
+        if (refreshCandidates && workspaceChanged) RefreshCandidates();
         RefreshWorkspaceStatistics();
     }
 
@@ -845,6 +1082,14 @@ public partial class MainWindow : Window
     {
         if (_archive is null || _ratingStore is null) return;
         _catalog.Refresh(_archive, _ratingStore);
+    }
+
+    private async Task RefreshCandidatesAsync()
+    {
+        var archive = _archive;
+        var ratings = _ratingStore;
+        if (archive is null || ratings is null) return;
+        await Task.Run(() => _catalog.Refresh(archive, ratings));
     }
 
     private HashSet<string> GetSeenSourceIds()
@@ -881,6 +1126,11 @@ public partial class MainWindow : Window
     private void UpdateCurrentText()
     {
         if (_current is null) return;
+        if (_ratingMismatches is not null)
+        {
+            CurrentTextBlock.Text = $"Rating adjustment · {Math.Min(_ratingMismatchIndex + 1, _ratingMismatchTotal)} of {_ratingMismatchTotal}\nUse 1–5 stars to confirm or move the human rating. AI score hidden.";
+            return;
+        }
         var score = _aiService.TryGetScore(_current.SourceId, out var scored) ? scored : _catalog.GetScore(_current);
         var rating = _ratingStore?.FindRating(_current.ImagePath);
         var scoreText = score is null ? "AI score: pending" : $"AI score: {score.Score:0.00000} · expected rating {score.ExpectedRating:0.00}";
@@ -910,6 +1160,20 @@ public partial class MainWindow : Window
         StartStopRenderButton.IsEnabled = true;
         PauseResumeRenderButton.IsEnabled = status.IsRunning;
         RandomGeneratorSettingsButton.IsEnabled = !status.IsRunning;
+    }
+
+    private void UpdateAiControls()
+    {
+        var ai = _aiService.Status;
+        var training = ai.IsTraining || _activeTraining is not null;
+        var rescoringRated = _activeRatedRescore is not null;
+        var adjustingRatings = _ratingMismatches is not null;
+        StartStopAiButton.Content = ai.IsRunning ? "Stop AI scoring" : "Start AI scoring";
+        StartStopAiButton.IsEnabled = !training && !rescoringRated && !adjustingRatings && !_loadingRatingMismatches;
+        TrainModelButton.IsEnabled = _activeTraining is not null || (!rescoringRated && !adjustingRatings && !_loadingRatingMismatches);
+        RescoreRatedDatasetButton.IsEnabled = rescoringRated || (!training && !adjustingRatings && !ai.IsRunning && !_loadingRatingMismatches);
+        StartStopRatingAdjustmentButton.Content = adjustingRatings ? "Finish review" : "Review mismatches";
+        StartStopRatingAdjustmentButton.IsEnabled = adjustingRatings || (!_loadingRatingMismatches && !training && !rescoringRated);
     }
 
     private void UpdateDatasetStatistics(DatasetStatistics statistics)
