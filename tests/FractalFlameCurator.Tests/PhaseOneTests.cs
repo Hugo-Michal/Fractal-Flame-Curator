@@ -671,7 +671,7 @@ public sealed class PhaseOneTests
             await using var service = new ContinuousRenderService(new FlameGenerator(), new FastRenderer());
             service.Start(new ContinuousRenderOptions { OutputDirectory = root, BatchLimit = 2, QueueCapacity = 1, WorkerCount = 1 });
             var deadline = DateTime.UtcNow.AddSeconds(5);
-            while (service.Status.Completed < 2 && DateTime.UtcNow < deadline) await Task.Delay(20);
+            while ((service.Status.Completed < 2 || service.Status.IsRunning) && DateTime.UtcNow < deadline) await Task.Delay(20);
             Assert.Equal(2, service.Status.Completed);
             Assert.False(service.Status.IsRunning);
             Assert.Equal(2, service.Status.ReadyCount);
