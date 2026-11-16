@@ -23,6 +23,11 @@ public sealed class ToneCurve : IEquatable<ToneCurve>
 
     public byte[] CreateLookup()
     {
+        return CreateValues(256).Select(value => (byte)Math.Clamp((int)Math.Round(value * 255), 0, 255)).ToArray();
+    }
+
+    internal double[] CreateValues(int count)
+    {
         var slopes = new double[_points.Length - 1];
         var tangents = new double[_points.Length];
         for (var i = 0; i < slopes.Length; i++)
@@ -39,19 +44,19 @@ public sealed class ToneCurve : IEquatable<ToneCurve>
             tangents[i] = (w1 + w2) / (w1 / slopes[i - 1] + w2 / slopes[i]);
         }
 
-        var lookup = new byte[256];
+        var lookup = new double[count];
         var segment = 0;
         for (var value = 0; value < lookup.Length; value++)
         {
-            var x = value / 255d;
+            var x = value / (double)(count - 1);
             if (x <= _points[0].X)
             {
-                lookup[value] = (byte)Math.Clamp((int)Math.Round(_points[0].Y * 255), 0, 255);
+                lookup[value] = _points[0].Y;
                 continue;
             }
             if (x >= _points[^1].X)
             {
-                lookup[value] = (byte)Math.Clamp((int)Math.Round(_points[^1].Y * 255), 0, 255);
+                lookup[value] = _points[^1].Y;
                 continue;
             }
             while (segment < slopes.Length - 1 && x > _points[segment + 1].X) segment++;
@@ -64,7 +69,7 @@ public sealed class ToneCurve : IEquatable<ToneCurve>
             var y = (2 * t3 - 3 * t2 + 1) * a.Y + (t3 - 2 * t2 + t) * h * tangents[segment]
                     + (-2 * t3 + 3 * t2) * b.Y + (t3 - t2) * h * tangents[segment + 1];
             y = Math.Clamp(y, Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y));
-            lookup[value] = (byte)Math.Clamp((int)Math.Round(y * 255), 0, 255);
+            lookup[value] = y;
         }
         return lookup;
     }

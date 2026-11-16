@@ -159,6 +159,7 @@ Its controls are separated into two steps:
 The master curve is drawn over the red, green, and blue intensity histograms of
 the image after tone mapping, filtering, and smoothing, but before the curve.
 The histogram uses a logarithmic count scale; monochrome channels appear in gray.
+It groups the higher-precision values into 256 bins for display only.
 Applying a curve-only edit leaves the histogram unchanged; applying a change to
 the pre-curve image updates it. The curve starts as an identity diagonal.
 Clicking adds a point, dragging moves it, and right-clicking an interior point
@@ -184,6 +185,15 @@ loaded. A sampling result remains available if later image processing fails or
 is cancelled; a failed or cancelled sampling operation keeps the prior preview
 and sampled data. An existing PNG and `.flame` file cannot restore the data.
 
+The standalone tool accumulates sampled density and color in 64-bit floating
+point, maps and downsamples into 32-bit floating-point color values, and applies
+optional Gaussian smoothing at that precision. The master curve is applied to
+those values before quantizing the completed image to 16 bits per channel. The
+preview and Save 16-bit PNG As use that completed image: monochrome output is a
+16-bit grayscale PNG and color output is a 16-bit-per-channel RGB PNG. No PNG
+file is written until the user saves it. The main candidate rendering workflow
+continues to use its existing 8-bit PNG format.
+
 Oversampling and output size are checked against image and estimated available
 memory limits before sampling or remapping; existing retained data is included
 in the available-memory check. Sample-budget fields in both windows and the
@@ -195,7 +205,7 @@ scales density to a 20-million-point reference; it cannot guarantee an identical
 image when other settings change.
 
 Re-render toggles to cancellation while active. A successful operation previews
-the image and enables saving a PNG to a chosen path; cancellation or failure
+the image and enables saving a 16-bit PNG to a chosen path; cancellation or failure
 keeps any previous preview and saved files. The source `.flame` is never changed,
 and the tool does not add the result to workspace ratings or candidates. The
 preview fits the viewport by default, supports mouse-wheel zoom in and out, and

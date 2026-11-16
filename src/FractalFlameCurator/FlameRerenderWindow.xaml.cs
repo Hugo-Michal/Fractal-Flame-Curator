@@ -17,7 +17,7 @@ public partial class FlameRerenderWindow : Window
 {
     private readonly FlameRenderSession _session;
     private FlameGenome? _genome;
-    private RenderedFrame? _frame;
+    private RenderedFrame16? _frame;
     private CancellationTokenSource? _cancellation;
     private double _zoomScale = 1;
     private bool _fitToViewport = true;
@@ -236,8 +236,9 @@ public partial class FlameRerenderWindow : Window
         var pixels = side * side;
         if (pixels > int.MaxValue / 4) throw new InvalidOperationException("This size and oversampling combination exceeds the renderer's image limit.");
         var monochrome = string.Equals(palette.Name, PaletteDefinition.Monochrome.Name, StringComparison.OrdinalIgnoreCase);
-        var bytesPerInternalPixel = change == FlameRenderChange.Sampling ? (monochrome ? 12L : 36L) : 4L;
-        var estimated = pixels * bytesPerInternalPixel + (long)settings.Width * settings.Height * (smoothing > 0 ? 12L : 4L);
+        var channels = monochrome ? 1L : 3L;
+        var bytesPerInternalPixel = channels * 4 + (change == FlameRenderChange.Sampling ? (monochrome ? 8L : 32L) : 0L);
+        var estimated = pixels * bytesPerInternalPixel + (long)settings.Width * settings.Height * channels * (smoothing > 0 ? 20L : 12L);
         var limit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes * 3 / 5;
         var memory = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
         if (GlobalMemoryStatusEx(ref memory)) limit = Math.Min(limit, (long)(memory.AvailablePhysical * 3 / 4));
@@ -325,7 +326,7 @@ public partial class FlameRerenderWindow : Window
         if (_frame is null || string.IsNullOrWhiteSpace(FlamePathTextBox.Text)) return;
         var dialog = new SaveFileDialog
         {
-            Filter = "PNG image (*.png)|*.png", DefaultExt = ".png", AddExtension = true,
+            Filter = "16-bit PNG image (*.png)|*.png", DefaultExt = ".png", AddExtension = true,
             FileName = Path.GetFileNameWithoutExtension(FlamePathTextBox.Text) + "_rerender.png",
             InitialDirectory = Path.GetDirectoryName(FlamePathTextBox.Text)
         };

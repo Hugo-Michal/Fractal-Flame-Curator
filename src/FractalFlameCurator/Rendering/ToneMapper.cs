@@ -62,6 +62,53 @@ public static class ToneMapper
         return pixels;
     }
 
+    internal static float[] MapHighPrecision(double[] counts, double[] reds, double[] greens, double[] blues, RenderSettings settings, bool monochrome, CancellationToken cancellationToken)
+    {
+        if (counts.Length != reds.Length || counts.Length != greens.Length || counts.Length != blues.Length)
+            throw new ArgumentException("Tone-map channels must have the same length.");
+
+        var densityScale = settings.NormalizeDensityBySampleCount ? 20_000_000d / Math.Max(100, settings.SampleBudget) : 1d;
+        var maxLog = 0d;
+        for (var i = 0; i < counts.Length; i++)
+        {
+            if ((i & 65535) == 0) cancellationToken.ThrowIfCancellationRequested();
+            maxLog = Math.Max(maxLog, LogOnePlus(counts[i] * densityScale));
+        }
+
+        var channels = monochrome ? 1 : 3;
+        var pixels = new float[checked(counts.Length * channels)];
+        var gamma = Math.Clamp(settings.Gamma, 0.1, 8);
+        var brightness = Math.Clamp(settings.Brightness, 0.05, 5);
+        var vibrancy = Math.Clamp(settings.Vibrancy, 0, 1);
+        var whitePoint = Math.Clamp(settings.WhitePoint, 0, 1);
+        var blackPoint = Math.Clamp(settings.BlackPoint, 0, 1);
+        if (blackPoint <= whitePoint) blackPoint = Math.Min(1, whitePoint + 0.000001);
+        var contrastCurve = Math.Clamp(settings.ContrastCurve, 0.1, 8);
+        var lowDensityCutoff = Math.Clamp(settings.LowDensityCutoff, 0, 1);
+        for (var i = 0; i < counts.Length; i++)
+        {
+            if ((i & 65535) == 0) cancellationToken.ThrowIfCancellationRequested();
+            var rawDensity = maxLog <= 0 ? 0 : LogOnePlus(counts[i] * densityScale) / maxLog;
+            var density = rawDensity < lowDensityCutoff ? 0 : Math.Clamp((rawDensity - whitePoint) / Math.Max(0.000001, blackPoint - whitePoint), 0, 1);
+            density = ApplyContrastCurve(density, contrastCurve);
+            var tone = Math.Clamp(Math.Pow(Math.Clamp(density * brightness, 0, 1), 1 / gamma), 0, 1);
+            if (monochrome)
+            {
+                pixels[i] = (float)(1 - tone);
+                continue;
+            }
+            var averageR = counts[i] == 0 ? 0 : reds[i] / counts[i];
+            var averageG = counts[i] == 0 ? 0 : greens[i] / counts[i];
+            var averageB = counts[i] == 0 ? 0 : blues[i] / counts[i];
+            var luminance = averageR * 0.2126 + averageG * 0.7152 + averageB * 0.0722;
+            var offset = i * 3;
+            pixels[offset] = (float)Math.Clamp(1 - tone * (1 - (averageR * vibrancy + luminance * (1 - vibrancy)) / 255), 0, 1);
+            pixels[offset + 1] = (float)Math.Clamp(1 - tone * (1 - (averageG * vibrancy + luminance * (1 - vibrancy)) / 255), 0, 1);
+            pixels[offset + 2] = (float)Math.Clamp(1 - tone * (1 - (averageB * vibrancy + luminance * (1 - vibrancy)) / 255), 0, 1);
+        }
+        return pixels;
+    }
+
     private static double ApplyContrastCurve(double value, double contrastCurve)
     {
         if (Math.Abs(contrastCurve - 1) < 0.000001) return value;

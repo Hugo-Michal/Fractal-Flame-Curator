@@ -174,7 +174,7 @@ public sealed class PhaseOneTests
         var renderer = new CountingHistogramRenderer();
         var session = new FlameRenderSession(renderer);
         Assert.Equal(FlameRenderChange.Sampling, session.GetChange(genome, settings, 0));
-        async Task<RenderedFrame> Apply(RenderSettings values)
+        async Task<RenderedFrame16> Apply(RenderSettings values)
         {
             var prepared = await session.PrepareAsync(genome, values, 0, null, CancellationToken.None);
             session.Commit(prepared);
@@ -186,9 +186,9 @@ public sealed class PhaseOneTests
         var adjusted = settings with { Gamma = 0.6 };
         Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, adjusted, 0));
         var brighter = await Apply(adjusted);
-        Assert.False(original.BgraPixels.SequenceEqual(brighter.BgraPixels));
+        Assert.False(original.Pixels.SequenceEqual(brighter.Pixels));
         var restored = await Apply(settings);
-        Assert.Equal(original.BgraPixels, restored.BgraPixels);
+        Assert.Equal(original.Pixels, restored.Pixels);
         Assert.Equal(1, renderer.Samples);
         Assert.Equal(3, renderer.Maps);
 
@@ -239,25 +239,88 @@ public sealed class PhaseOneTests
         var session = new FlameRenderSession(renderer);
         var original = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None);
         session.Commit(original);
-        var direct = await new CpuFlameRenderer().RenderAsync(genome, settings, null, CancellationToken.None);
-        Assert.Equal(direct.BgraPixels, original.Frame.BgraPixels);
+        Assert.Equal(64 * 64, original.Frame.Pixels.Length);
         Assert.Equal(64 * 64, original.ColorHistogram.Red.Sum());
         Assert.Equal(FlameRenderChange.None, session.GetChange(genome, settings, 0, new ToneCurve(ToneCurve.Identity.Points)));
         var curve = new ToneCurve([new(0, 0), new(0.5, 0.8), new(1, 1)]);
         Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, settings, 0, curve));
         var edited = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None, curve);
         session.Commit(edited);
-        Assert.False(original.Frame.BgraPixels.SequenceEqual(edited.Frame.BgraPixels));
+        Assert.False(original.Frame.Pixels.SequenceEqual(edited.Frame.Pixels));
         Assert.Equal(original.ColorHistogram.Red, edited.ColorHistogram.Red);
         Assert.Equal(original.ColorHistogram.Green, edited.ColorHistogram.Green);
         Assert.Equal(original.ColorHistogram.Blue, edited.ColorHistogram.Blue);
         var restored = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None);
         session.Commit(restored);
-        Assert.Equal(original.Frame.BgraPixels, restored.Frame.BgraPixels);
+        Assert.Equal(original.Frame.Pixels, restored.Frame.Pixels);
         var smoothed = await session.PrepareAsync(genome, settings, 1, null, CancellationToken.None, curve);
         Assert.False(original.ColorHistogram.Red.SequenceEqual(smoothed.ColorHistogram.Red));
         Assert.Equal(1, renderer.Samples);
         Assert.Equal(4, renderer.Maps);
+    }
+
+    [Fact]
+    public void HighPrecisionCurveRetainsSubByteDifferencesAfterSmoothing()
+    {
+        var values = Enumerable.Range(0, 1024).Select(i => 0.3f + i * 0.0003f).ToArray();
+        var frame = new HighPrecisionFrame(1024, 1, 1, values);
+        var smoothed = PrecisionFrameProcessor.Smooth(frame, 0.5, 1, CancellationToken.None);
+        var curve = new ToneCurve([new(0.2, 0), new(0.8, 1)]);
+        var result = PrecisionFrameProcessor.ApplyCurve(smoothed, curve, CancellationToken.None);
+        Assert.True(result.Frame.Pixels.Distinct().Count() > 256);
+        Assert.Contains(result.Frame.Pixels, value => value % 257 != 0);
+        Assert.Equal(1024, result.Histogram.Red.Sum());
+        Assert.Equal(result.Histogram.Red, result.Histogram.Green);
+        Assert.Equal(result.Histogram.Red, result.Histogram.Blue);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StandaloneRenderRetainsPrecisionAndMatchesExistingTone(bool color)
+    {
+        var genome = new FlameGenerator().Generate(777);
+        if (color) genome.Palette = PaletteDefinition.Fire;
+        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 300_000, Oversample = 2, Gamma = 1 };
+        var renderer = new CpuFlameRenderer();
+        var oldFrame = await renderer.RenderAsync(genome, settings, null, CancellationToken.None);
+        var session = new FlameRenderSession(renderer);
+        var highFrame = (await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None)).Frame;
+        Assert.Equal(color ? 3 : 1, highFrame.Channels);
+        Assert.True(highFrame.Pixels.Distinct().Count() > 256);
+        for (var i = 0; i < 64 * 64; i++)
+            for (var channel = 0; channel < highFrame.Channels; channel++)
+            {
+                var oldIndex = i * 4 + (color ? 2 - channel : 0);
+                var newValue = highFrame.Pixels[i * highFrame.Channels + channel] / 257d;
+                Assert.InRange(Math.Abs(newValue - oldFrame.BgraPixels[oldIndex]), 0, 2.1);
+            }
+    }
+
+    [Theory]
+    [InlineData(1, 0)]
+    [InlineData(3, 2)]
+    public void StandalonePngStoresSixteenBitsPerChannel(int channels, byte colorType)
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var values = Enumerable.Range(0, 128 * channels).Select(i => (i + 1) / (float)(128 * channels + 1)).ToArray();
+            var input = new HighPrecisionFrame(128, 1, channels, values);
+            var result = PrecisionFrameProcessor.ApplyCurve(input, ToneCurve.Identity, CancellationToken.None);
+            var path = Path.Combine(root, "precision.png");
+            result.Frame.SavePng(path);
+            var bytes = File.ReadAllBytes(path);
+            Assert.Equal((byte)16, bytes[24]);
+            Assert.Equal(colorType, bytes[25]);
+            var decoded = new System.Windows.Media.Imaging.PngBitmapDecoder(new Uri(path), System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat, System.Windows.Media.Imaging.BitmapCacheOption.OnLoad).Frames[0];
+            var expectedFormat = channels == 1 ? System.Windows.Media.PixelFormats.Gray16 : System.Windows.Media.PixelFormats.Rgb48;
+            var converted = new System.Windows.Media.Imaging.FormatConvertedBitmap(decoded, expectedFormat, null, 0);
+            var decodedPixels = new ushort[result.Frame.Pixels.Length];
+            converted.CopyPixels(decodedPixels, 128 * channels * 2, 0);
+            Assert.Equal(result.Frame.Pixels, decodedPixels);
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     [Fact]
@@ -978,6 +1041,16 @@ public sealed class PhaseOneTests
                 throw new InvalidOperationException("synthetic mapping failure");
             }
             return _inner.MapAsync(histogram, settings, cancellationToken);
+        }
+        public Task<HighPrecisionFrame> MapHighPrecisionAsync(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken)
+        {
+            Maps++;
+            if (FailNextMap)
+            {
+                FailNextMap = false;
+                throw new InvalidOperationException("synthetic mapping failure");
+            }
+            return _inner.MapHighPrecisionAsync(histogram, settings, cancellationToken);
         }
     }
 

@@ -47,6 +47,7 @@ public interface IHistogramFlameRenderer : IFlameRenderer
 {
     Task<FlameHistogram> SampleAsync(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken);
     Task<RenderedFrame> MapAsync(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken);
+    Task<HighPrecisionFrame> MapHighPrecisionAsync(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken);
 }
 
 public sealed class FlameHistogram
@@ -94,6 +95,9 @@ public sealed class CpuFlameRenderer : IHistogramFlameRenderer
 
     public Task<RenderedFrame> MapAsync(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken) =>
         Task.Run(() => Map(histogram, settings, cancellationToken), cancellationToken);
+
+    public Task<HighPrecisionFrame> MapHighPrecisionAsync(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken) =>
+        Task.Run(() => MapHighPrecision(histogram, settings, cancellationToken), cancellationToken);
 
     private static FlameHistogram Sample(FlameGenome genome, RenderSettings settings, IProgress<RenderProgress>? progress, CancellationToken cancellationToken)
     {
@@ -226,6 +230,16 @@ public sealed class CpuFlameRenderer : IHistogramFlameRenderer
                 histogram.Width, histogram.Height, histogram.Oversample, settings.FilterRadius, cancellationToken));
     }
 
+    private static HighPrecisionFrame MapHighPrecision(FlameHistogram histogram, RenderSettings settings, CancellationToken cancellationToken)
+    {
+        var mapSettings = settings with { SampleBudget = histogram.SampleBudget };
+        var pixels = ToneMapper.MapHighPrecision(histogram.Counts, histogram.Reds, histogram.Greens, histogram.Blues, mapSettings, histogram.Monochrome, cancellationToken);
+        var channels = histogram.Monochrome ? 1 : 3;
+        return new HighPrecisionFrame(histogram.Width, histogram.Height, channels,
+            DownsampleHighPrecision(pixels, histogram.Width * histogram.Oversample, histogram.Height * histogram.Oversample,
+                histogram.Width, histogram.Height, histogram.Oversample, channels, settings.FilterRadius, cancellationToken));
+    }
+
     private static void AtomicAdd(ref double location, double value)
     {
         double before;
@@ -326,6 +340,41 @@ public sealed class CpuFlameRenderer : IHistogramFlameRenderer
                 output[outputIndex + 1] = (byte)Math.Clamp(sumG / total, 0, 255);
                 output[outputIndex + 2] = (byte)Math.Clamp(sumR / total, 0, 255);
                 output[outputIndex + 3] = (byte)Math.Clamp(sumA / total, 0, 255);
+            }
+        }
+        return output;
+    }
+
+    private static float[] DownsampleHighPrecision(float[] source, int sourceWidth, int sourceHeight, int width, int height, int oversample, int channels, double filterRadius, CancellationToken cancellationToken)
+    {
+        if (oversample == 1 && filterRadius <= 0.75) return source;
+        var output = new float[checked(width * height * channels)];
+        var radius = Math.Clamp((int)Math.Ceiling(filterRadius), 0, 3);
+        for (var y = 0; y < height; y++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            for (var x = 0; x < width; x++)
+            {
+                var centerX = x * oversample + (oversample - 1) / 2;
+                var centerY = y * oversample + (oversample - 1) / 2;
+                var sumR = 0d; var sumG = 0d; var sumB = 0d; var total = 0d;
+                for (var sy = centerY - radius; sy <= centerY + radius; sy++)
+                {
+                    if ((uint)sy >= (uint)sourceHeight) continue;
+                    for (var sx = centerX - radius; sx <= centerX + radius; sx++)
+                    {
+                        if ((uint)sx >= (uint)sourceWidth) continue;
+                        var distance = Math.Sqrt((sx - centerX) * (sx - centerX) + (sy - centerY) * (sy - centerY));
+                        var weight = Math.Max(0.01, filterRadius + 1 - distance);
+                        var index = (sy * sourceWidth + sx) * channels;
+                        sumR += source[index] * weight;
+                        if (channels == 3) { sumG += source[index + 1] * weight; sumB += source[index + 2] * weight; }
+                        total += weight;
+                    }
+                }
+                var target = (y * width + x) * channels;
+                output[target] = (float)(sumR / total);
+                if (channels == 3) { output[target + 1] = (float)(sumG / total); output[target + 2] = (float)(sumB / total); }
             }
         }
         return output;

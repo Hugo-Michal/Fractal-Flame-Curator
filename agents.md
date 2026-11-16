@@ -62,7 +62,7 @@ that Python file beside the executable under Ai/.
 | src/FractalFlameCurator/Models | In-memory flame, transform, palette, render, scoring, and dataset contracts. VariationRegistry is the supported-variation source of truth. |
 | src/FractalFlameCurator/Generation | Seeded random source, FlameGenerator, SpaceFillingSimplexSampler, and FlameValidator. This owns reproducible valid genomes. |
 | src/FractalFlameCurator/Serialization | FlameXmlSerializer reads and writes the Apophysis-compatible .flame dialect and legacy attributes. |
-| src/FractalFlameCurator/Rendering | CpuFlameRenderer samples deterministic density/color histograms using seeded CPU streams, ToneMapper maps them to pixels, FlameRenderSession retains them for standalone adjustments, FrameSmoother and ToneCurve process the output, and ArtifactRerenderer safely replaces an existing PNG. |
+| src/FractalFlameCurator/Rendering | CpuFlameRenderer samples deterministic density/color histograms using seeded CPU streams, ToneMapper maps them to pixels, FlameRenderSession retains them for standalone adjustments, PrecisionFrameProcessor and ToneCurve process the high-precision standalone output, and ArtifactRerenderer safely replaces an existing PNG. |
 | src/FractalFlameCurator/Controls | ToneCurveEditor provides the standalone RGB histogram and draggable master curve; ViewportZoom provides shared fit/zoom bounds. |
 | src/FractalFlameCurator/Storage | SourceArchive writes complete source pairs; RatingStore moves, re-rates, validates, and undoes matched PNG/.flame pairs. |
 | src/FractalFlameCurator/Pipeline | BoundedRenderQueue, ContinuousRenderService, CandidateCatalog, and ContinuousAiScoringService coordinate background work and candidate ordering. |
@@ -82,7 +82,7 @@ MainWindow
   |-- CandidateCatalog <-> SourceArchive + RatingStore
   |-- RatingStore -> ratings/1 through ratings/5
   |-- FlameRerenderWindow -> FlameRenderSession -> CpuFlameRenderer histogram
-  |                                      '-- ToneMapper -> optional FrameSmoother
+  |                                      '-- ToneMapper -> float downsample/smoothing -> curve -> 16-bit PNG
   |
   '-- ContinuousAiScoringService
         |-- PreferenceDatasetBuilder <- ratings/1 through ratings/5
@@ -144,6 +144,8 @@ it is metadata, not a candidate.
 - Standalone image adjustments remap the retained, unmodified sampled histogram;
   changing camera, output size, sample budget, oversampling, workers, or palette
   requires sampling again. Loading another source or closing releases the cache.
+- Standalone tone mapping, downsampling, smoothing, and the master curve retain
+  higher-than-8-bit precision before quantization to a 16-bit-per-channel PNG.
 - A generated flame is square, defaults to 2048 by 2048, contains a
   256-color palette, has two to twelve valid transforms, and passes
   FlameValidator before serialization or rendering.

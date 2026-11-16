@@ -6,7 +6,7 @@ public enum FlameRenderChange { None, Adjustment, Sampling }
 
 public sealed class PreparedFlameFrame
 {
-    internal PreparedFlameFrame(RenderedFrame frame, FlameHistogram histogram, RgbHistogram colorHistogram, RenderSettings settings, double smoothing, ToneCurve curve)
+    internal PreparedFlameFrame(RenderedFrame16 frame, FlameHistogram histogram, RgbHistogram colorHistogram, RenderSettings settings, double smoothing, ToneCurve curve)
     {
         Frame = frame;
         Histogram = histogram;
@@ -16,7 +16,7 @@ public sealed class PreparedFlameFrame
         Curve = curve;
     }
 
-    public RenderedFrame Frame { get; }
+    public RenderedFrame16 Frame { get; }
     public RgbHistogram ColorHistogram { get; }
     internal FlameHistogram Histogram { get; }
     internal RenderSettings Settings { get; }
@@ -29,7 +29,7 @@ public sealed class FlameRenderSession(IHistogramFlameRenderer renderer)
     private FlameHistogram? _histogram;
     private SamplingKey? _sampling;
     private AdjustmentKey? _adjustment;
-    private RenderedFrame? _frame;
+    private RenderedFrame16? _frame;
     private RgbHistogram? _colorHistogram;
 
     public FlameRenderChange GetChange(FlameGenome genome, RenderSettings settings, double smoothing, ToneCurve? curve = null)
@@ -58,12 +58,12 @@ public sealed class FlameRenderSession(IHistogramFlameRenderer renderer)
             _colorHistogram = null;
         }
         if (histogram is null) throw new InvalidOperationException("Sample the flame before applying adjustments.");
-        var frame = await renderer.MapAsync(histogram, settings, cancellationToken);
+        var frame = await renderer.MapHighPrecisionAsync(histogram, settings, cancellationToken);
         if (smoothing > 0)
-            frame = await Task.Run(() => FrameSmoother.Apply(frame, smoothing, settings.WorkerCount, cancellationToken), cancellationToken);
-        var colorHistogram = await Task.Run(() => BitmapToneCurve.Apply(frame, curve, cancellationToken), cancellationToken);
+            frame = await Task.Run(() => PrecisionFrameProcessor.Smooth(frame, smoothing, settings.WorkerCount, cancellationToken), cancellationToken);
+        var processed = await Task.Run(() => PrecisionFrameProcessor.ApplyCurve(frame, curve, cancellationToken), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-        return new PreparedFlameFrame(frame, histogram, colorHistogram, settings, smoothing, curve);
+        return new PreparedFlameFrame(processed.Frame, histogram, processed.Histogram, settings, smoothing, curve);
     }
 
     public void Commit(PreparedFlameFrame prepared)
