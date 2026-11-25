@@ -19,7 +19,7 @@ The application helps a human curate generated fractal flames:
 5. Optional AI learns a preference estimate from those human ratings and shows
    the resulting score without replacing human judgment.
 
-The product is a native Windows WPF application. The primary workflow must work
+Version 1.5.0 is a native Windows WPF application. The primary workflow must work
 without a web server, remote rendering, a genetic algorithm, a preexisting
 image dataset, Python, CUDA, or AI. The optional AI feature is additive and
 never controls or edits human ratings.
