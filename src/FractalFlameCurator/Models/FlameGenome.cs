@@ -210,6 +210,7 @@ public sealed class PaletteDefinition
 
 public sealed record RenderSettings
 {
+    public const long MaximumSampleBudget = 1_000_000_000_000;
     public int Width { get; init; } = 2048;
     public int Height { get; init; } = 2048;
     public long SampleBudget { get; init; } = 20_000_000;
@@ -223,7 +224,7 @@ public sealed record RenderSettings
     public double WhitePoint { get; init; } = 0;
     public double BlackPoint { get; init; } = 1;
     public double ContrastCurve { get; init; } = 1;
-    public double LowDensityCutoff { get; init; } = 0.01;
+    public double LowDensityCutoff { get; init; } = 0;
     public string PaletteName { get; init; } = PaletteDefinition.Monochrome.Name;
 }
 

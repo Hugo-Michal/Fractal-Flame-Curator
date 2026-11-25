@@ -6,15 +6,27 @@
         Background="#0D1218" Foreground="#F3F6FA">
   <Grid Margin="12">
     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-    <TextBlock Grid.Row="0" Text="Load a .flame, then use Re-render to sample the flame or apply image adjustments. The source file is left unchanged." TextWrapping="Wrap" Margin="0,0,0,8" />
+    <TextBlock Grid.Row="0" Text="Add one or more .flame files, then use Re-render. Multiple files are processed in queue order; source files remain unchanged." TextWrapping="Wrap" Margin="0,0,0,8" />
     <DockPanel Grid.Row="1" LastChildFill="True" Margin="0,0,0,8">
-      <Button x:Name="LoadButton" DockPanel.Dock="Left" Content="Load .flame…" Click="Load_Click" Margin="0,0,8,0" />
+      <Button x:Name="LoadButton" DockPanel.Dock="Left" Content="Add .flame(s)…" Click="Load_Click" Margin="0,0,8,0" />
       <TextBox x:Name="FlamePathTextBox" IsReadOnly="True" VerticalContentAlignment="Center" />
     </DockPanel>
     <Grid Grid.Row="2">
       <Grid.ColumnDefinitions><ColumnDefinition Width="340" /><ColumnDefinition Width="10" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
       <ScrollViewer x:Name="SettingsPanel" Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="0,0,8,0">
+          <Expander x:Name="QueueExpander" Header="Flame queue (0)" Margin="0,0,0,8">
+            <StackPanel>
+              <ListBox x:Name="FlameQueueList" Height="90" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}"
+                       SelectionChanged="FlameQueue_SelectionChanged" ToolTip="Files are rendered from top to bottom." />
+              <TextBlock Text="Multiple files use the same settings and save to rerendered folders beside their sources." Foreground="#A7B3C1" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal">
+                <Button Content="Move up" Click="QueueMoveUp_Click" />
+                <Button Content="Move down" Click="QueueMoveDown_Click" />
+                <Button Content="Remove" Click="QueueRemove_Click" />
+              </StackPanel>
+            </StackPanel>
+          </Expander>
           <TextBlock Text="Step 1 — Flame sampling" FontWeight="Bold" FontSize="15" Margin="0,0,0,4" />
           <TextBlock Text="Changes here require sampling the flame again." TextWrapping="Wrap" Foreground="#A7B3C1" />
           <TextBlock Text="Camera" FontWeight="SemiBold" Margin="0,8,0,0" />
@@ -34,11 +46,19 @@
           </UniformGrid>
           <TextBlock Text="Step 2 — Image adjustments" FontWeight="Bold" FontSize="15" Margin="0,14,0,4" />
           <TextBlock Text="After sampling, press Re-render to apply these changes without new points." TextWrapping="Wrap" Foreground="#A7B3C1" />
+          <CheckBox x:Name="AutomaticCurveCheckBox" Content="Automatic full-range RGB curve" Margin="0,8,0,0" ToolTip="For each flame, map its darkest and lightest input channel values to black and white. A uniform image is left unchanged." />
           <TextBlock Text="Master RGB curve · histogram before curve" FontWeight="SemiBold" Margin="0,8,0,0" />
           <controls:ToneCurveEditor x:Name="CurveEditor" Height="210" Margin="0,3,0,0"
-                                    ToolTip="Drag the bottom black/white markers to set input levels. Click to add a point; drag to move it; right-click to remove it." />
-          <TextBlock Text="Drag bottom markers for black and white inputs. Click to add curve points; drag to move; right-click to remove. Histogram height uses a logarithmic scale." Foreground="#A7B3C1" TextWrapping="Wrap" Margin="0,3,0,0" />
-          <Button Content="Reset curve" Click="ResetCurve_Click" HorizontalAlignment="Left" />
+                                    ToolTip="Drag the bottom black/white markers to set true black and white input levels. Click to add a point; drag to move it; right-click to remove it." />
+          <TextBlock x:Name="MarkerRangeText" Foreground="#A7B3C1" TextWrapping="Wrap" Margin="0,3,0,0" />
+          <TextBlock x:Name="ImageRangeText" Foreground="#A7B3C1" TextWrapping="Wrap" />
+          <TextBlock Text="Black is on the left; white is on the right. Filled bars show the image before the curve. Press Re-render to apply changes." Foreground="#A7B3C1" TextWrapping="Wrap" Margin="0,3,0,0" />
+          <CheckBox x:Name="LogHistogramCheckBox" Content="Logarithmic histogram scale" IsChecked="True" ToolTip="Hide bars at or below 0.1% of the tallest bar, and show the remaining bars on a logarithmic scale. This affects only the display." />
+          <CheckBox x:Name="ShowOutputHistogramCheckBox" Content="Overlay output histogram (outline)" ToolTip="Outline shows the last applied output; filled bars show the input. The output updates after Re-render." />
+          <StackPanel Orientation="Horizontal">
+            <Button x:Name="FitInputRangeButton" Content="Fit input range (reset curve)" Click="FitInputRange_Click" IsEnabled="False" ToolTip="Set markers to the darkest and lightest input channel values and reset the curve. Apply other setting changes first. Color images use the combined channel range." />
+            <Button x:Name="ResetCurveButton" Content="Reset curve" Click="ResetCurve_Click" />
+          </StackPanel>
           <UniformGrid Columns="2">
             <StackPanel Margin="0,0,4,0"><Label Content="Filter radius" Target="{Binding ElementName=FilterTextBox}" /><TextBox x:Name="FilterTextBox" /></StackPanel>
             <StackPanel Margin="4,0,0,0"><Label Content="Smoothing (pixels)" Target="{Binding ElementName=SmoothingTextBox}" /><TextBox x:Name="SmoothingTextBox" ToolTip="Gaussian smoothing after rendering; larger values soften details" /></StackPanel>

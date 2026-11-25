@@ -84,7 +84,11 @@ public sealed class ToneCurve : IEquatable<ToneCurve>
     }
 }
 
-public sealed record RgbHistogram(long[] Red, long[] Green, long[] Blue);
+public sealed record RgbHistogram(long[] Red, long[] Green, long[] Blue)
+{
+    public double? Minimum { get; init; }
+    public double? Maximum { get; init; }
+}
 
 public static class BitmapToneCurve
 {

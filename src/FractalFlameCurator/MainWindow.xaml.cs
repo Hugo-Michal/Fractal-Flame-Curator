@@ -92,7 +92,7 @@ public partial class MainWindow : Window
         WhitePointTextBox.Text = "0.0";
         BlackPointTextBox.Text = "0.85";
         ContrastCurveTextBox.Text = "1.0";
-        LowDensityCutoffTextBox.Text = "0.01";
+        LowDensityCutoffTextBox.Text = "0";
         VibrancyTextBox.Text = "1.0";
         PaletteComboBox.ItemsSource = PaletteDefinition.BuiltIns;
         PaletteComboBox.SelectedIndex = 0;
@@ -350,7 +350,7 @@ public partial class MainWindow : Window
         {
             Width = 2048,
             Height = 2048,
-            SampleBudget = GroupedIntegerInput.Parse(SampleBudgetTextBox.Text, "Sample budget", 100, 20_000_000_000),
+            SampleBudget = GroupedIntegerInput.Parse(SampleBudgetTextBox.Text, "Sample budget", 100, RenderSettings.MaximumSampleBudget),
             Oversample = ParseInt((OversampleComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString(), 1, 1, 3),
             FilterRadius = ParseDouble(FilterRadiusTextBox, 0.5, 0, 3),
             Gamma = ParseDouble(GammaTextBox, 1, 0.1, 8),
@@ -359,7 +359,7 @@ public partial class MainWindow : Window
             WhitePoint = whitePoint,
             BlackPoint = blackPoint,
             ContrastCurve = ParseDouble(ContrastCurveTextBox, 1, 0.1, 8),
-            LowDensityCutoff = ParseDouble(LowDensityCutoffTextBox, 0.01, 0, 1),
+            LowDensityCutoff = ParseDouble(LowDensityCutoffTextBox, 0, 0, 1),
             PaletteName = palette.Name
         };
     }

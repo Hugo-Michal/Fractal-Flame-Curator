@@ -17,6 +17,7 @@ public sealed class RenderedFrame16(int width, int height, int channels, ushort[
     public int Height { get; } = height;
     public int Channels { get; } = channels;
     public ushort[] Pixels { get; } = pixels;
+    public RgbHistogram? ColorHistogram { get; internal set; }
 
     public BitmapSource ToBitmapSource()
     {
@@ -38,6 +39,18 @@ public sealed class RenderedFrame16(int width, int height, int channels, ushort[
 
 public static class PrecisionFrameProcessor
 {
+    public static ToneCurve CreateAutomaticCurve(HighPrecisionFrame frame, CancellationToken cancellationToken)
+    {
+        var minimum = 1d; var maximum = 0d;
+        for (var i = 0; i < frame.Pixels.Length; i++)
+        {
+            if ((i & 65535) == 0) cancellationToken.ThrowIfCancellationRequested();
+            var value = Math.Clamp(frame.Pixels[i], 0f, 1f);
+            minimum = Math.Min(minimum, value); maximum = Math.Max(maximum, value);
+        }
+        return minimum < maximum ? new ToneCurve([new(minimum, 0), new(maximum, 1)]) : ToneCurve.Identity;
+    }
+
     public static HighPrecisionFrame Smooth(HighPrecisionFrame frame, double radius, int workers, CancellationToken cancellationToken)
     {
         if (!double.IsFinite(radius) || radius < 0 || radius > 3) throw new ArgumentOutOfRangeException(nameof(radius));
@@ -84,12 +97,17 @@ public static class PrecisionFrameProcessor
     {
         var lookup = curve.CreateValues(65536);
         var red = new long[256]; var green = new long[256]; var blue = new long[256];
+        var outputRed = new long[256]; var outputGreen = new long[256]; var outputBlue = new long[256];
+        var minimum = 1d; var maximum = 0d;
+        var outputMinimum = ushort.MaxValue; var outputMaximum = ushort.MinValue;
+        var first = curve.Points[0]; var last = curve.Points[^1];
         var output = new ushort[frame.Pixels.Length];
         for (var i = 0; i < frame.Pixels.Length; i++)
         {
             if ((i & 65535) == 0) cancellationToken.ThrowIfCancellationRequested();
             var value = Math.Clamp(frame.Pixels[i], 0f, 1f);
-            var bin = Math.Clamp((int)(value * 255), 0, 255);
+            minimum = Math.Min(minimum, value); maximum = Math.Max(maximum, value);
+            var bin = Math.Min((int)(value * 256), 255);
             if (frame.Channels == 1) { red[bin]++; green[bin]++; blue[bin]++; }
             else if (i % 3 == 0) red[bin]++;
             else if (i % 3 == 1) green[bin]++;
@@ -97,9 +115,24 @@ public static class PrecisionFrameProcessor
             var position = value * 65535d;
             var lower = (int)position;
             var upper = Math.Min(lower + 1, 65535);
-            var mapped = lookup[lower] + (lookup[upper] - lookup[lower]) * (position - lower);
+            var mapped = value <= first.X ? first.Y : value >= last.X ? last.Y
+                : curve.Points.Count == 2 ? first.Y + (value - first.X) * (last.Y - first.Y) / (last.X - first.X)
+                : lookup[lower] + (lookup[upper] - lookup[lower]) * (position - lower);
             output[i] = (ushort)Math.Clamp((int)Math.Round(mapped * 65535), 0, 65535);
+            outputMinimum = Math.Min(outputMinimum, output[i]); outputMaximum = Math.Max(outputMaximum, output[i]);
+            var outputBin = output[i] >> 8;
+            if (frame.Channels == 1) { outputRed[outputBin]++; outputGreen[outputBin]++; outputBlue[outputBin]++; }
+            else if (i % 3 == 0) outputRed[outputBin]++;
+            else if (i % 3 == 1) outputGreen[outputBin]++;
+            else outputBlue[outputBin]++;
         }
-        return (new RenderedFrame16(frame.Width, frame.Height, frame.Channels, output), new RgbHistogram(red, green, blue));
+        var result = new RenderedFrame16(frame.Width, frame.Height, frame.Channels, output)
+        {
+            ColorHistogram = new RgbHistogram(outputRed, outputGreen, outputBlue)
+            {
+                Minimum = outputMinimum / 65535d, Maximum = outputMaximum / 65535d
+            }
+        };
+        return (result, new RgbHistogram(red, green, blue) { Minimum = minimum, Maximum = maximum });
     }
 }

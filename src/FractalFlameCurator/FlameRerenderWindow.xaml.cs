@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using System.Windows;
 using FractalFlameCurator.Controls;
@@ -16,6 +17,8 @@ namespace FractalFlameCurator;
 public partial class FlameRerenderWindow : Window
 {
     private readonly FlameRenderSession _session;
+    private readonly ObservableCollection<string> _flamePaths = [];
+    private bool _updatingQueueSelection;
     private FlameGenome? _genome;
     private RenderedFrame16? _frame;
     private CancellationTokenSource? _cancellation;
@@ -27,6 +30,7 @@ public partial class FlameRerenderWindow : Window
     {
         InitializeComponent();
         _session = new FlameRenderSession(renderer);
+        FlameQueueList.ItemsSource = _flamePaths;
         SizeTextBox.Text = settings.Width.ToString(CultureInfo.InvariantCulture);
         GroupedIntegerInput.Attach(SizeTextBox);
         WorkersTextBox.Text = Math.Max(1, Environment.ProcessorCount).ToString(CultureInfo.InvariantCulture);
@@ -47,18 +51,37 @@ public partial class FlameRerenderWindow : Window
         PaletteComboBox.SelectionChanged += (_, _) => UpdateRenderMode();
         StableToneCheckBox.Checked += (_, _) => UpdateRenderMode();
         StableToneCheckBox.Unchecked += (_, _) => UpdateRenderMode();
-        CurveEditor.CurveChanged += (_, _) => UpdateRenderMode();
+        CurveEditor.CurveChanged += (_, _) => { UpdateRenderMode(); UpdateHistogramSummary(); };
+        ShowOutputHistogramCheckBox.Checked += (_, _) => CurveEditor.ShowOutputHistogram = true;
+        ShowOutputHistogramCheckBox.Unchecked += (_, _) => CurveEditor.ShowOutputHistogram = false;
+        LogHistogramCheckBox.Checked += (_, _) => CurveEditor.UseLogarithmicHistogram = true;
+        LogHistogramCheckBox.Unchecked += (_, _) => CurveEditor.UseLogarithmicHistogram = false;
+        AutomaticCurveCheckBox.Checked += (_, _) => AutomaticCurveChanged();
+        AutomaticCurveCheckBox.Unchecked += (_, _) => AutomaticCurveChanged();
+        UpdateHistogramSummary();
     }
 
     private void Load_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog { Filter = "Apophysis flame files (*.flame)|*.flame|All files (*.*)|*.*", CheckFileExists = true };
+        var dialog = new OpenFileDialog { Filter = "Apophysis flame files (*.flame)|*.flame|All files (*.*)|*.*", CheckFileExists = true, Multiselect = true };
         if (dialog.ShowDialog(this) != true) return;
+        foreach (var path in dialog.FileNames)
+            if (!_flamePaths.Contains(path, StringComparer.OrdinalIgnoreCase)) _flamePaths.Add(path);
+        QueueExpander.Header = $"Flame queue ({_flamePaths.Count})";
+        if (_flamePaths.Count > 1) QueueExpander.IsExpanded = true;
+        if (FlameQueueList.SelectedIndex < 0 && _flamePaths.Count > 0) FlameQueueList.SelectedIndex = 0;
+        UpdateRenderMode();
+    }
+
+    private void FlameQueue_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_updatingQueueSelection || FlameQueueList.SelectedItem is not string path ||
+            (_genome is not null && string.Equals(FlamePathTextBox.Text, path, StringComparison.OrdinalIgnoreCase))) return;
         try
         {
             _session.Clear();
-            _genome = FlameXmlSerializer.Load(dialog.FileName);
-            FlamePathTextBox.Text = dialog.FileName;
+            _genome = FlameXmlSerializer.Load(path);
+            FlamePathTextBox.Text = path;
             CenterXTextBox.Text = Format(_genome.CenterX);
             CenterYTextBox.Text = Format(_genome.CenterY);
             ScaleTextBox.Text = Format(_genome.Scale);
@@ -68,6 +91,8 @@ public partial class FlameRerenderWindow : Window
             PreviewImage.ClearValue(FrameworkElement.WidthProperty);
             PreviewImage.ClearValue(FrameworkElement.HeightProperty);
             CurveEditor.Histogram = null;
+            CurveEditor.OutputHistogram = null;
+            UpdateHistogramSummary();
             _fitToViewport = true;
             EmptyPreviewText.Visibility = Visibility.Visible;
             RenderButton.IsEnabled = true;
@@ -84,6 +109,8 @@ public partial class FlameRerenderWindow : Window
             PreviewImage.ClearValue(FrameworkElement.WidthProperty);
             PreviewImage.ClearValue(FrameworkElement.HeightProperty);
             CurveEditor.Histogram = null;
+            CurveEditor.OutputHistogram = null;
+            UpdateHistogramSummary();
             _fitToViewport = true;
             EmptyPreviewText.Visibility = Visibility.Visible;
             RenderButton.IsEnabled = false;
@@ -91,6 +118,37 @@ public partial class FlameRerenderWindow : Window
             StatusText.Text = $"Could not load flame: {exception.Message}";
             UpdateRenderMode();
         }
+    }
+
+    private void QueueMoveUp_Click(object sender, RoutedEventArgs e) => MoveQueueItem(-1);
+    private void QueueMoveDown_Click(object sender, RoutedEventArgs e) => MoveQueueItem(1);
+
+    private void MoveQueueItem(int offset)
+    {
+        var index = FlameQueueList.SelectedIndex;
+        var next = index + offset;
+        if (index < 0 || next < 0 || next >= _flamePaths.Count) return;
+        _updatingQueueSelection = true;
+        try { _flamePaths.Move(index, next); FlameQueueList.SelectedIndex = next; }
+        finally { _updatingQueueSelection = false; }
+    }
+
+    private void QueueRemove_Click(object sender, RoutedEventArgs e)
+    {
+        var index = FlameQueueList.SelectedIndex;
+        if (index < 0) return;
+        _flamePaths.RemoveAt(index);
+        QueueExpander.Header = $"Flame queue ({_flamePaths.Count})";
+        if (_flamePaths.Count > 0) FlameQueueList.SelectedIndex = Math.Min(index, _flamePaths.Count - 1);
+        else
+        {
+            _session.Clear(); _genome = null; _frame = null;
+            FlamePathTextBox.Text = string.Empty; PreviewImage.Source = null;
+            CurveEditor.Histogram = null; CurveEditor.OutputHistogram = null;
+            EmptyPreviewText.Visibility = Visibility.Visible; SaveButton.IsEnabled = false; RenderButton.IsEnabled = false;
+            UpdateHistogramSummary();
+        }
+        UpdateRenderMode();
     }
 
     private async void Render_Click(object sender, RoutedEventArgs e)
@@ -103,8 +161,9 @@ public partial class FlameRerenderWindow : Window
         try
         {
             request = ReadRequest();
-            change = _session.GetChange(request.Genome, request.Settings, request.Smoothing, request.Curve);
-            if (change == FlameRenderChange.None)
+            change = _flamePaths.Count > 1 ? FlameRenderChange.Sampling :
+                _session.GetChange(request.Genome, request.Settings, request.Smoothing, request.Curve, request.AutomaticCurve);
+            if (change == FlameRenderChange.None && _flamePaths.Count <= 1)
             {
                 StatusText.Text = "No settings have changed.";
                 return;
@@ -129,6 +188,11 @@ public partial class FlameRerenderWindow : Window
         StatusText.Text = change == FlameRenderChange.Sampling ? "Starting flame sampling…" : "Applying image adjustments…";
         try
         {
+            if (_flamePaths.Count > 1)
+            {
+                await RenderBatchAsync(request, cancellation);
+                return;
+            }
             var progress = new ThrottledProgress(update => Dispatcher.BeginInvoke(() =>
             {
                 if (ReferenceEquals(_cancellation, cancellation))
@@ -136,7 +200,7 @@ public partial class FlameRerenderWindow : Window
                         ? "Sampling complete; applying image adjustments…"
                         : $"Rendering on {request.Settings.WorkerCount} CPU workers… {GroupedIntegerInput.Format(update.CompletedSamples)}/{GroupedIntegerInput.Format(update.TotalSamples)} points";
             }));
-            var prepared = await _session.PrepareAsync(request.Genome, request.Settings, request.Smoothing, progress, cancellation.Token, request.Curve);
+            var prepared = await _session.PrepareAsync(request.Genome, request.Settings, request.Smoothing, progress, cancellation.Token, request.Curve, request.AutomaticCurve);
             var frame = prepared.Frame;
             StatusText.Text = "Preparing preview…";
             var bitmap = await Task.Run(frame.ToBitmapSource, cancellation.Token);
@@ -144,7 +208,10 @@ public partial class FlameRerenderWindow : Window
             PreviewImage.Source = bitmap;
             _session.Commit(prepared);
             _frame = frame;
+            if (request.AutomaticCurve) CurveEditor.DisplayCurve(prepared.Curve);
             CurveEditor.Histogram = prepared.ColorHistogram;
+            CurveEditor.OutputHistogram = frame.ColorHistogram;
+            UpdateHistogramSummary();
             EmptyPreviewText.Visibility = Visibility.Collapsed;
             if (_fitToViewport) ApplyFitZoom(); else ApplyZoom(_zoomScale);
             StatusText.Text = change == FlameRenderChange.Sampling
@@ -166,12 +233,52 @@ public partial class FlameRerenderWindow : Window
         }
     }
 
+    private async Task RenderBatchAsync(RenderRequest request, CancellationTokenSource cancellation)
+    {
+        var paths = _flamePaths.ToArray();
+        var displayedIndex = 0;
+        var progress = new Progress<FlameBatchProgress>(update =>
+        {
+            if (!ReferenceEquals(_cancellation, cancellation) || update.Index < displayedIndex) return;
+            displayedIndex = update.Index;
+            var samples = update.Sampling is { } value
+                ? $" · {GroupedIntegerInput.Format(value.CompletedSamples)}/{GroupedIntegerInput.Format(value.TotalSamples)} points"
+                : string.Empty;
+            StatusText.Text = $"Batch {update.Index}/{update.Total}: {Path.GetFileName(update.SourcePath)}{samples}";
+        });
+        var batch = new FlameBatchRerenderer(_session);
+        var results = await batch.RenderAsync(paths, request.Genome, request.Settings, request.Smoothing, request.Curve,
+            request.AutomaticCurve, request.UseSourcePalette,
+            (settings, palette, smoothing) => CheckMemory(settings, palette, smoothing, FlameRenderChange.Sampling), progress,
+            async (path, genome, prepared, output) =>
+            {
+                var bitmap = await Task.Run(prepared.Frame.ToBitmapSource, cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+                _updatingQueueSelection = true;
+                try { FlameQueueList.SelectedItem = path; }
+                finally { _updatingQueueSelection = false; }
+                _genome = genome; FlamePathTextBox.Text = path; _frame = prepared.Frame;
+                PreviewImage.Source = bitmap;
+                if (request.AutomaticCurve) CurveEditor.DisplayCurve(prepared.Curve);
+                CurveEditor.Histogram = prepared.ColorHistogram;
+                CurveEditor.OutputHistogram = prepared.Frame.ColorHistogram;
+                UpdateHistogramSummary(); EmptyPreviewText.Visibility = Visibility.Collapsed;
+                if (_fitToViewport) ApplyFitZoom(); else ApplyZoom(_zoomScale);
+                StatusText.Text = $"Saved {output}";
+            }, cancellation.Token);
+        var saved = results.Count(result => result.OutputPath is not null);
+        var errors = results.Where(result => result.Error is not null).ToArray();
+        StatusText.Text = errors.Length == 0
+            ? $"Batch complete: {saved} images saved in rerendered subfolders."
+            : $"Batch finished: {saved} saved; {errors.Length} failed. {Path.GetFileName(errors[0].SourcePath)}: {errors[0].Error}";
+    }
+
     private RenderRequest ReadRequest()
     {
         var source = _genome ?? throw new InvalidOperationException("Load a flame first.");
         var size = (int)GroupedIntegerInput.Parse(SizeTextBox.Text, "Output size", 32, 10_000);
         var workers = ReadInt(WorkersTextBox, "CPU workers", 1, Math.Max(1, Environment.ProcessorCount));
-        var samples = GroupedIntegerInput.Parse(SamplesTextBox.Text, "Sample budget", 100, 20_000_000_000);
+        var samples = GroupedIntegerInput.Parse(SamplesTextBox.Text, "Sample budget", 100, RenderSettings.MaximumSampleBudget);
         var oversample = OversampleComboBox.SelectedIndex + 1;
         var smoothing = ReadDouble(SmoothingTextBox, "Smoothing", 0, 3);
         var palette = PaletteComboBox.SelectedIndex == 0 ? source.Palette : PaletteDefinition.BuiltIns[PaletteComboBox.SelectedIndex - 1];
@@ -204,18 +311,21 @@ public partial class FlameRerenderWindow : Window
         genome.Gamma = settings.Gamma;
         genome.Brightness = settings.Brightness;
         genome.Vibrancy = settings.Vibrancy;
-        return new RenderRequest(genome, settings, smoothing, CurveEditor.Curve);
+        return new RenderRequest(genome, settings, smoothing, CurveEditor.Curve, AutomaticCurveCheckBox.IsChecked == true, PaletteComboBox.SelectedIndex == 0);
     }
 
     private void UpdateRenderMode()
     {
         if (_cancellation is not null) return;
-        if (_genome is null) { RenderModeText.Text = "Load a flame to begin."; return; }
+        if (_genome is null) { FitInputRangeButton.IsEnabled = false; RenderModeText.Text = "Load a flame to begin."; return; }
         try
         {
             var request = ReadRequest();
-            var change = _session.GetChange(request.Genome, request.Settings, request.Smoothing, request.Curve);
-            var message = change switch
+            var input = CurveEditor.Histogram;
+            FitInputRangeButton.IsEnabled = !request.AutomaticCurve && _session.IsInputCurrent(request.Genome, request.Settings, request.Smoothing) &&
+                input?.Minimum is { } min && input.Maximum is { } max && min < max;
+            var change = _session.GetChange(request.Genome, request.Settings, request.Smoothing, request.Curve, request.AutomaticCurve);
+            var message = _flamePaths.Count > 1 ? $"Next: render {_flamePaths.Count} queued flames in order and save each PNG." : change switch
             {
                 FlameRenderChange.Sampling => "Next: sample flame points again.",
                 FlameRenderChange.Adjustment => "Next: apply image adjustments; no new points.",
@@ -225,10 +335,10 @@ public partial class FlameRerenderWindow : Window
                 ? message + " Preview shows the previous image."
                 : message;
         }
-        catch (InvalidOperationException) { RenderModeText.Text = "Check settings before re-rendering."; }
+        catch (InvalidOperationException) { FitInputRangeButton.IsEnabled = false; RenderModeText.Text = "Check settings before re-rendering."; }
     }
 
-    private sealed record RenderRequest(FlameGenome Genome, RenderSettings Settings, double Smoothing, ToneCurve Curve);
+    private sealed record RenderRequest(FlameGenome Genome, RenderSettings Settings, double Smoothing, ToneCurve Curve, bool AutomaticCurve, bool UseSourcePalette);
 
     private static void CheckMemory(RenderSettings settings, PaletteDefinition palette, double smoothing, FlameRenderChange change)
     {
@@ -273,6 +383,36 @@ public partial class FlameRerenderWindow : Window
             ? value : throw new InvalidOperationException($"{name} must be between {min} and {max}; use a decimal point.");
 
     private void ResetCurve_Click(object sender, RoutedEventArgs e) => CurveEditor.Reset();
+
+    private void AutomaticCurveChanged()
+    {
+        var automatic = AutomaticCurveCheckBox.IsChecked == true;
+        CurveEditor.IsEnabled = !automatic;
+        ResetCurveButton.IsEnabled = !automatic;
+        UpdateRenderMode();
+    }
+
+    private void FitInputRange_Click(object sender, RoutedEventArgs e)
+    {
+        StatusText.Text = CurveEditor.FitInputRange()
+            ? "Input range fitted and curve reset. Press Re-render to apply."
+            : "Render an image with more than one input value before fitting the range.";
+    }
+
+    private void UpdateHistogramSummary()
+    {
+        static string Percent(double value) => (value * 100).ToString("0.0000", CultureInfo.InvariantCulture) + "%";
+        var points = CurveEditor.Curve.Points;
+        MarkerRangeText.Text = $"Input markers: {Percent(points[0].X)} black · {Percent(points[^1].X)} white";
+        var input = CurveEditor.Histogram;
+        var output = CurveEditor.OutputHistogram;
+        if (input?.Minimum is not { } min || input.Maximum is not { } max || output?.Minimum is not { } outputMin || output.Maximum is not { } outputMax)
+        {
+            ImageRangeText.Text = "Render an image to see its input and output channel ranges.";
+            return;
+        }
+        ImageRangeText.Text = $"Input channels: {Percent(min)}–{Percent(max)}\nLast output: {(int)Math.Round(outputMin * 65535)}–{(int)Math.Round(outputMax * 65535)} / 65535";
+    }
 
     private void ZoomFit_Click(object sender, RoutedEventArgs e) { _fitToViewport = true; ApplyFitZoom(); }
     private void ActualSize_Click(object sender, RoutedEventArgs e) { _fitToViewport = false; ApplyZoom(1); }

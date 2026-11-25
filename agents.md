@@ -62,7 +62,7 @@ that Python file beside the executable under Ai/.
 | src/FractalFlameCurator/Models | In-memory flame, transform, palette, render, scoring, and dataset contracts. VariationRegistry is the supported-variation source of truth. |
 | src/FractalFlameCurator/Generation | Seeded random source, FlameGenerator, SpaceFillingSimplexSampler, and FlameValidator. This owns reproducible valid genomes. |
 | src/FractalFlameCurator/Serialization | FlameXmlSerializer reads and writes the Apophysis-compatible .flame dialect and legacy attributes. |
-| src/FractalFlameCurator/Rendering | CpuFlameRenderer samples deterministic density/color histograms using seeded CPU streams, ToneMapper maps them to pixels, FlameRenderSession retains them for standalone adjustments, PrecisionFrameProcessor and ToneCurve process the high-precision standalone output, and ArtifactRerenderer safely replaces an existing PNG. |
+| src/FractalFlameCurator/Rendering | CpuFlameRenderer samples deterministic density/color histograms using seeded CPU streams, ToneMapper maps them to pixels, FlameRenderSession retains them for standalone adjustments, FlameBatchRerenderer processes queued sources sequentially, PrecisionFrameProcessor and ToneCurve process the high-precision standalone output, and ArtifactRerenderer safely replaces an existing PNG. |
 | src/FractalFlameCurator/Controls | ToneCurveEditor provides the standalone RGB histogram and draggable master curve; ViewportZoom provides shared fit/zoom bounds. |
 | src/FractalFlameCurator/Storage | SourceArchive writes complete source pairs; RatingStore moves, re-rates, validates, and undoes matched PNG/.flame pairs. |
 | src/FractalFlameCurator/Pipeline | BoundedRenderQueue, ContinuousRenderService, CandidateCatalog, and ContinuousAiScoringService coordinate background work and candidate ordering. |
@@ -139,7 +139,7 @@ it is metadata, not a candidate.
   deterministic seeds and exact histogram accumulation. Do not introduce time,
   unordered iteration, or non-seeded randomness into generation or rendering.
 - Sample budgets, serialized quality values, and render progress use 64-bit
-  counts so the supported 20-billion-point limit cannot overflow. Standalone
+  counts so the supported one-trillion-point limit cannot overflow. Standalone
   output supports up to 10,000 pixels per side subject to memory and array limits.
 - Standalone image adjustments remap the retained, unmodified sampled histogram;
   changing camera, output size, sample budget, oversampling, workers, or palette

@@ -18,6 +18,9 @@ public sealed class ToneCurveEditor : FrameworkElement
     private const double MinimumSpacing = 1d / 1024;
     private ToneCurve _curve = ToneCurve.Identity;
     private RgbHistogram? _histogram;
+    private RgbHistogram? _outputHistogram;
+    private bool _showOutputHistogram;
+    private bool _useLogarithmicHistogram = true;
     private int _selected;
     private bool _dragging;
     private bool _draggingInputMarker;
@@ -28,15 +31,39 @@ public sealed class ToneCurveEditor : FrameworkElement
         ClipToBounds = true;
         Cursor = System.Windows.Input.Cursors.Cross;
         AutomationProperties.SetName(this, "Master RGB tone curve");
-        AutomationProperties.SetHelpText(this, "Drag the black and white markers below the graph to set input levels. Click to add a curve point, drag to move it, right-click or press Delete to remove it. Arrow keys move the selected point; Insert adds one.");
+        AutomationProperties.SetHelpText(this, "Drag the black and white markers below the graph to set true black and white input levels. Click to add a curve point, drag to move it, right-click or press Delete to remove it. Arrow keys move the selected point; Insert adds one.");
     }
 
     public event EventHandler? CurveChanged;
     public ToneCurve Curve => _curve;
+    public void DisplayCurve(ToneCurve curve) { _selected = 0; SetCurve(curve); }
     public RgbHistogram? Histogram
     {
         get => _histogram;
         set { _histogram = value; InvalidateVisual(); }
+    }
+    public RgbHistogram? OutputHistogram
+    {
+        get => _outputHistogram;
+        set { _outputHistogram = value; InvalidateVisual(); }
+    }
+    public bool ShowOutputHistogram
+    {
+        get => _showOutputHistogram;
+        set { _showOutputHistogram = value; InvalidateVisual(); }
+    }
+    public bool UseLogarithmicHistogram
+    {
+        get => _useLogarithmicHistogram;
+        set { _useLogarithmicHistogram = value; InvalidateVisual(); }
+    }
+
+    public bool FitInputRange()
+    {
+        if (_histogram?.Minimum is not { } minimum || _histogram.Maximum is not { } maximum || minimum >= maximum) return false;
+        _selected = 0;
+        SetCurve(new ToneCurve([new(minimum, 0), new(maximum, 1)]));
+        return true;
     }
 
     public void Reset()
@@ -52,7 +79,7 @@ public sealed class ToneCurveEditor : FrameworkElement
         drawing.DrawRectangle(new SolidColorBrush(Color.FromRgb(12, 18, 25)), new Pen(new SolidColorBrush(Color.FromRgb(64, 86, 109)), 1), plot);
         if (plot.Width <= 0 || plot.Height <= 0) return;
         drawing.PushClip(new RectangleGeometry(plot));
-        if (_histogram is not null) DrawHistogram(drawing, plot, _histogram);
+        if (_histogram is not null) DrawHistogram(drawing, plot, _histogram, _showOutputHistogram ? _outputHistogram : null, _useLogarithmicHistogram);
         var gridPen = new Pen(new SolidColorBrush(Color.FromArgb(90, 145, 162, 180)), 0.7);
         for (var i = 1; i < 4; i++)
         {
@@ -141,7 +168,7 @@ public sealed class ToneCurveEditor : FrameworkElement
         MoveSelected((position.X - plot.Left) / plot.Width, (plot.Bottom - position.Y) / plot.Height);
 
     private void MoveInputMarkerFromScreen(Rect plot, WpfPoint position) =>
-        MoveSelected((position.X - plot.Left) / plot.Width, _curve.Points[_selected].Y);
+        MoveSelected((position.X - plot.Left) / plot.Width, _selected == 0 ? 0 : 1);
 
     protected override void OnMouseLeftButtonUp(WpfMouseButtonEventArgs e)
     {
@@ -201,8 +228,8 @@ public sealed class ToneCurveEditor : FrameworkElement
     private void MoveSelected(double x, double y)
     {
         var points = _curve.Points.ToList();
-        var minimum = _selected == 0 ? 0 : points[_selected - 1].X + MinimumSpacing;
-        var maximum = _selected == points.Count - 1 ? 1 : points[_selected + 1].X - MinimumSpacing;
+        var minimum = _selected == 0 ? 0 : points[_selected - 1].X + Math.Min(MinimumSpacing, (points[_selected].X - points[_selected - 1].X) / 2);
+        var maximum = _selected == points.Count - 1 ? 1 : points[_selected + 1].X - Math.Min(MinimumSpacing, (points[_selected + 1].X - points[_selected].X) / 2);
         x = Math.Clamp(x, minimum, maximum);
         var next = new ToneCurvePoint(x, Math.Clamp(y, 0, 1));
         if (points[_selected] == next) return;
@@ -266,23 +293,43 @@ public sealed class ToneCurveEditor : FrameworkElement
         return best;
     }
 
-    private static void DrawHistogram(DrawingContext drawing, Rect plot, RgbHistogram histogram)
+    private static void DrawHistogram(DrawingContext drawing, Rect plot, RgbHistogram histogram, RgbHistogram? output, bool logarithmic)
     {
         var max = Math.Max(histogram.Red.Max(), Math.Max(histogram.Green.Max(), histogram.Blue.Max()));
+        if (output is not null) max = Math.Max(max, Math.Max(output.Red.Max(), Math.Max(output.Green.Max(), output.Blue.Max())));
         if (max <= 0) return;
-        var scale = Math.Log(1d + max);
+        var floor = max * 0.001;
+        double Height(long count) => plot.Height * (logarithmic
+            ? count <= floor ? 0 : Math.Log(count / floor) / Math.Log(max / floor)
+            : (double)count / max);
         void Channel(long[] bins, Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            for (var i = 0; i < bins.Length; i++)
+            {
+                var height = Height(bins[i]);
+                if (height <= 0) continue;
+                var left = plot.Left + plot.Width * i / bins.Length;
+                var right = plot.Left + plot.Width * (i + 1) / bins.Length;
+                drawing.DrawRectangle(brush, null, new Rect(left, plot.Bottom - height, right - left, height));
+            }
+        }
+        void Outline(long[] bins, Color color)
         {
             var geometry = new StreamGeometry();
             using (var context = geometry.Open())
             {
-                context.BeginFigure(new WpfPoint(plot.Left, plot.Bottom), true, true);
+                context.BeginFigure(new WpfPoint(plot.Left, plot.Bottom), false, false);
                 for (var i = 0; i < bins.Length; i++)
-                    context.LineTo(new WpfPoint(plot.Left + plot.Width * i / 255d, plot.Bottom - plot.Height * Math.Log(1d + bins[i]) / scale), true, false);
+                {
+                    var y = plot.Bottom - Height(bins[i]);
+                    context.LineTo(new WpfPoint(plot.Left + plot.Width * i / bins.Length, y), true, false);
+                    context.LineTo(new WpfPoint(plot.Left + plot.Width * (i + 1) / bins.Length, y), true, false);
+                }
                 context.LineTo(new WpfPoint(plot.Right, plot.Bottom), true, false);
             }
             geometry.Freeze();
-            drawing.DrawGeometry(new SolidColorBrush(color), null, geometry);
+            drawing.DrawGeometry(null, new Pen(new SolidColorBrush(color), 1), geometry);
         }
         if (histogram.Red.SequenceEqual(histogram.Green) && histogram.Red.SequenceEqual(histogram.Blue))
             Channel(histogram.Red, Color.FromArgb(110, 210, 210, 210));
@@ -291,6 +338,15 @@ public sealed class ToneCurveEditor : FrameworkElement
             Channel(histogram.Red, Color.FromArgb(80, 255, 70, 70));
             Channel(histogram.Green, Color.FromArgb(80, 70, 255, 120));
             Channel(histogram.Blue, Color.FromArgb(80, 90, 145, 255));
+        }
+        if (output is null) return;
+        if (output.Red.SequenceEqual(output.Green) && output.Red.SequenceEqual(output.Blue))
+            Outline(output.Red, Color.FromRgb(255, 197, 79));
+        else
+        {
+            Outline(output.Red, Color.FromRgb(255, 105, 105));
+            Outline(output.Green, Color.FromRgb(105, 255, 145));
+            Outline(output.Blue, Color.FromRgb(120, 170, 255));
         }
     }
 }

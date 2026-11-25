@@ -77,26 +77,29 @@ public sealed class PhaseOneTests
         finally { Directory.Delete(root, true); }
     }
 
-    [Fact]
-    public void TwentyBillionSampleBudgetRoundTripsInTheFlameFormat()
+    [Theory]
+    [InlineData(20_000_000_000L, 10_000)]
+    [InlineData(1_000_000_000_000L, 10_000)]
+    [InlineData(999_999_999_999L, 5600)]
+    public void LargeSampleBudgetsRoundTripInTheFlameFormat(long budget, int size)
     {
         var genome = new FlameGenerator().Generate(12345);
-        genome.Quality = 20_000_000_000;
-        genome.Width = genome.Height = 10_000;
+        genome.Quality = budget;
+        genome.Width = genome.Height = size;
         var roundTrip = FlameXmlSerializer.Deserialize(FlameXmlSerializer.Serialize(genome));
-        Assert.Equal(20_000_000_000L, roundTrip.Quality);
-        Assert.Equal(10_000, roundTrip.Width);
-        Assert.Equal(10_000, roundTrip.Height);
+        Assert.Equal(budget, roundTrip.Quality);
+        Assert.Equal(size, roundTrip.Width);
+        Assert.Equal(size, roundTrip.Height);
     }
 
     [Fact]
     public void GroupedIntegerInputFormatsAndParsesLargeValues()
     {
-        Assert.Equal("20 000 000 000", GroupedIntegerInput.Format(20_000_000_000));
-        Assert.Equal(20_000_000_000L, GroupedIntegerInput.Parse("20 000 000 000", "Sample budget", 100, 20_000_000_000));
+        Assert.Equal("1 000 000 000 000", GroupedIntegerInput.Format(RenderSettings.MaximumSampleBudget));
+        Assert.Equal(RenderSettings.MaximumSampleBudget, GroupedIntegerInput.Parse("1 000 000 000 000", "Sample budget", 100, RenderSettings.MaximumSampleBudget));
         Assert.Equal(10_000L, GroupedIntegerInput.Parse("10000", "Output size", 32, 10_000));
         Assert.False(GroupedIntegerInput.TryParse("20,000,000,000", out _));
-        Assert.Throws<InvalidOperationException>(() => GroupedIntegerInput.Parse("20 000 000 001", "Sample budget", 100, 20_000_000_000));
+        Assert.Throws<InvalidOperationException>(() => GroupedIntegerInput.Parse("1 000 000 000 001", "Sample budget", 100, RenderSettings.MaximumSampleBudget));
     }
 
     [Fact]
@@ -182,6 +185,9 @@ public sealed class PhaseOneTests
         }
         var original = await Apply(settings);
         Assert.Equal(FlameRenderChange.None, session.GetChange(genome, settings, 0));
+        Assert.True(session.IsInputCurrent(genome, settings, 0));
+        Assert.False(session.IsInputCurrent(genome, settings with { FilterRadius = 1 }, 0));
+        Assert.False(session.IsInputCurrent(genome, settings, 1));
 
         var adjusted = settings with { Gamma = 0.6 };
         Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, adjusted, 0));
@@ -244,19 +250,145 @@ public sealed class PhaseOneTests
         Assert.Equal(FlameRenderChange.None, session.GetChange(genome, settings, 0, new ToneCurve(ToneCurve.Identity.Points)));
         var curve = new ToneCurve([new(0, 0), new(0.5, 0.8), new(1, 1)]);
         Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, settings, 0, curve));
+        Assert.True(session.IsInputCurrent(genome, settings, 0));
         var edited = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None, curve);
         session.Commit(edited);
         Assert.False(original.Frame.Pixels.SequenceEqual(edited.Frame.Pixels));
         Assert.Equal(original.ColorHistogram.Red, edited.ColorHistogram.Red);
         Assert.Equal(original.ColorHistogram.Green, edited.ColorHistogram.Green);
         Assert.Equal(original.ColorHistogram.Blue, edited.ColorHistogram.Blue);
+        Assert.False(original.Frame.ColorHistogram!.Red.SequenceEqual(edited.Frame.ColorHistogram!.Red));
+        Assert.Equal(64 * 64, edited.Frame.ColorHistogram.Red.Sum());
         var restored = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None);
         session.Commit(restored);
         Assert.Equal(original.Frame.Pixels, restored.Frame.Pixels);
+        Assert.Equal(original.Frame.ColorHistogram.Red, restored.Frame.ColorHistogram!.Red);
         var smoothed = await session.PrepareAsync(genome, settings, 1, null, CancellationToken.None, curve);
         Assert.False(original.ColorHistogram.Red.SequenceEqual(smoothed.ColorHistogram.Red));
         Assert.Equal(1, renderer.Samples);
         Assert.Equal(4, renderer.Maps);
+    }
+
+    [Fact]
+    public async Task AutomaticCurveFitsEachInputAndReusesSampledPoints()
+    {
+        var genome = new FlameGenerator().Generate(123);
+        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 50_000, Gamma = 1 };
+        var renderer = new CountingHistogramRenderer();
+        var session = new FlameRenderSession(renderer);
+        var original = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None);
+        session.Commit(original);
+        Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, settings, 0, null, automaticCurve: true));
+        var fitted = await session.PrepareAsync(genome, settings, 0, null, CancellationToken.None, null, automaticCurve: true);
+        session.Commit(fitted);
+        Assert.Equal((ushort)0, fitted.Frame.Pixels.Min());
+        Assert.Equal(ushort.MaxValue, fitted.Frame.Pixels.Max());
+        Assert.Equal(original.ColorHistogram.Red, fitted.ColorHistogram.Red);
+        Assert.Equal(1, renderer.Samples);
+        Assert.Equal(2, renderer.Maps);
+        var unusedManualCurve = new ToneCurve([new(0, 0), new(0.5, 0.8), new(1, 1)]);
+        Assert.Equal(FlameRenderChange.None, session.GetChange(genome, settings, 0, unusedManualCurve, automaticCurve: true));
+        Assert.Equal(FlameRenderChange.Adjustment, session.GetChange(genome, settings, 0, unusedManualCurve));
+
+        var flat = new HighPrecisionFrame(2, 1, 1, [0.4f, 0.4f]);
+        Assert.Equal(ToneCurve.Identity, PrecisionFrameProcessor.CreateAutomaticCurve(flat, CancellationToken.None));
+        var another = new HighPrecisionFrame(2, 1, 1, [0.2f, 0.6f]);
+        var anotherCurve = PrecisionFrameProcessor.CreateAutomaticCurve(another, CancellationToken.None);
+        Assert.Equal((double)another.Pixels[0], anotherCurve.Points[0].X);
+        Assert.Equal((double)another.Pixels[1], anotherCurve.Points[^1].X);
+        Assert.Equal(new ushort[] { 0, 65535 }, PrecisionFrameProcessor.ApplyCurve(another, anotherCurve, CancellationToken.None).Frame.Pixels);
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => PrecisionFrameProcessor.CreateAutomaticCurve(another, cancellation.Token));
+    }
+
+    [Fact]
+    public async Task BatchRendersInOrderWithSharedSettingsAndPreservesExistingFiles()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var first = new FlameGenerator().Generate(123);
+            var second = new FlameGenerator().Generate(456);
+            second.Palette = PaletteDefinition.Fire;
+            var firstPath = Path.Combine(root, "first.flame");
+            var secondPath = Path.Combine(root, "second.flame");
+            FlameXmlSerializer.Save(first, firstPath);
+            FlameXmlSerializer.Save(second, secondPath);
+            var firstBefore = File.ReadAllBytes(firstPath);
+            var secondBefore = File.ReadAllBytes(secondPath);
+            var outputFolder = Path.Combine(root, "rerendered"); Directory.CreateDirectory(outputFolder);
+            var existing = Path.Combine(outputFolder, "first_rerender.png"); File.WriteAllText(existing, "existing image");
+            var renderer = new CountingHistogramRenderer();
+            var session = new FlameRenderSession(renderer);
+            var batch = new FlameBatchRerenderer(session);
+            var settings = new RenderSettings { Width = 32, Height = 32, SampleBudget = 5_000, Gamma = 1, WorkerCount = 1 };
+            first.CenterX = 0.125; first.Scale = 120;
+            var completed = new List<string>();
+            var results = await batch.RenderAsync([secondPath, firstPath], first, settings, 0, ToneCurve.Identity, true, false,
+                (_, _, _) => { }, null, (path, genome, prepared, output) =>
+                {
+                    completed.Add(path);
+                    Assert.Equal(0.125, genome.CenterX);
+                    Assert.Equal(120, genome.Scale);
+                    Assert.Equal(settings.SampleBudget, genome.Quality);
+                    Assert.Equal(PaletteDefinition.Monochrome.Name, genome.Palette.Name);
+                    Assert.Equal((ushort)0, prepared.Frame.Pixels.Min());
+                    Assert.Equal(ushort.MaxValue, prepared.Frame.Pixels.Max());
+                    Assert.True(File.Exists(output));
+                    return Task.CompletedTask;
+                }, CancellationToken.None);
+            Assert.Equal(new[] { secondPath, firstPath }, completed);
+            Assert.Equal(new[] { secondPath, firstPath }, results.Select(result => result.SourcePath));
+            Assert.All(results, result => Assert.Null(result.Error));
+            Assert.Equal(Path.Combine(outputFolder, "second_rerender.png"), results[0].OutputPath);
+            Assert.Equal(Path.Combine(outputFolder, "first_rerender_002.png"), results[1].OutputPath);
+            Assert.Equal("existing image", File.ReadAllText(existing));
+            Assert.Equal(firstBefore, File.ReadAllBytes(firstPath));
+            Assert.Equal(secondBefore, File.ReadAllBytes(secondPath));
+            Assert.Equal(2, renderer.Samples);
+            Assert.All(results, result => Assert.Equal((byte)16, File.ReadAllBytes(result.OutputPath!)[24]));
+
+            var sourcePalettes = new List<PaletteDefinition>();
+            var sourceResults = await batch.RenderAsync([firstPath, secondPath], first, settings, 0, ToneCurve.Identity, true, true,
+                (_, _, _) => { }, null, (_, genome, _, _) => { sourcePalettes.Add(genome.Palette); return Task.CompletedTask; }, CancellationToken.None);
+            Assert.Equal(2, sourcePalettes.Count);
+            Assert.Equal(PaletteDefinition.Monochrome.Colors, sourcePalettes[0].Colors);
+            Assert.Equal(PaletteDefinition.Fire.Colors, sourcePalettes[1].Colors);
+            Assert.All(sourceResults, result => Assert.Null(result.Error));
+            Assert.Equal((byte)0, File.ReadAllBytes(sourceResults[0].OutputPath!)[25]);
+            Assert.Equal((byte)2, File.ReadAllBytes(sourceResults[1].OutputPath!)[25]);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task BatchContinuesAfterAnInvalidSourceAndCancellationKeepsCompletedImages()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var genome = new FlameGenerator().Generate(321);
+            var first = Path.Combine(root, "first.flame"); var last = Path.Combine(root, "last.flame");
+            FlameXmlSerializer.Save(genome, first); FlameXmlSerializer.Save(genome, last);
+            var missing = Path.Combine(root, "missing.flame");
+            var settings = new RenderSettings { Width = 32, Height = 32, SampleBudget = 2_000, Gamma = 1 };
+            var session = new FlameRenderSession(new CpuFlameRenderer());
+            var batch = new FlameBatchRerenderer(session);
+            var results = await batch.RenderAsync([first, missing, last], genome, settings, 0, ToneCurve.Identity, false, true,
+                (_, _, _) => { }, null, null, CancellationToken.None);
+            Assert.Equal(3, results.Count);
+            Assert.NotNull(results[0].OutputPath); Assert.NotNull(results[1].Error); Assert.NotNull(results[2].OutputPath);
+
+            using var cancellation = new CancellationTokenSource();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => batch.RenderAsync([first, last], genome, settings, 0, ToneCurve.Identity, false, true,
+                (_, _, _) => { }, null, (_, _, _, _) => { cancellation.Cancel(); return Task.CompletedTask; }, cancellation.Token));
+            var files = Directory.GetFiles(Path.Combine(root, "rerendered"));
+            Assert.Equal(3, files.Length);
+            Assert.DoesNotContain(files, file => file.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase));
+            Assert.True(File.Exists(Path.Combine(root, "rerendered", "first_rerender_002.png")));
+            Assert.False(File.Exists(Path.Combine(root, "rerendered", "last_rerender_002.png")));
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     [Fact]
@@ -272,6 +404,170 @@ public sealed class PhaseOneTests
         Assert.Equal(1024, result.Histogram.Red.Sum());
         Assert.Equal(result.Histogram.Red, result.Histogram.Green);
         Assert.Equal(result.Histogram.Red, result.Histogram.Blue);
+    }
+
+    [Fact]
+    public void ExactInputEndpointsMapToExactBlackAndWhiteBetweenLookupEntries()
+    {
+        float black = 0.50001f, white = 0.70001f;
+        var frame = new HighPrecisionFrame(2, 1, 1, [black, white]);
+        var curve = new ToneCurve([new(black, 0), new(white, 1)]);
+        var processed = PrecisionFrameProcessor.ApplyCurve(frame, curve, CancellationToken.None);
+        Assert.Equal(new ushort[] { 0, 65535 }, processed.Frame.Pixels);
+    }
+
+    [Fact]
+    public void HistogramBinsUseTheirActualIntervalsAndOutputPixels()
+    {
+        var frame = new HighPrecisionFrame(4, 1, 1, [0f, 0.5f, 0.7f, 1f]);
+        var processed = PrecisionFrameProcessor.ApplyCurve(frame, ToneCurve.Identity, CancellationToken.None);
+        Assert.Equal(1, processed.Histogram.Red[0]);
+        Assert.Equal(1, processed.Histogram.Red[128]);
+        Assert.Equal(1, processed.Histogram.Red[179]);
+        Assert.Equal(1, processed.Histogram.Red[255]);
+        Assert.Equal(0, processed.Histogram.Minimum);
+        Assert.Equal(1, processed.Histogram.Maximum);
+        var output = processed.Frame.ColorHistogram!;
+        Assert.Equal(1, output.Red[0]);
+        Assert.Equal(1, output.Red[128]);
+        Assert.Equal(1, output.Red[179]);
+        Assert.Equal(1, output.Red[255]);
+        Assert.Equal(0, output.Minimum);
+        Assert.Equal(1, output.Maximum);
+    }
+
+    [Fact]
+    public void FittingInputExtremaMapsThemToFullRangeEvenWhenTheyAreVeryClose()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                float minimum = 0.500001f, maximum = 0.500005f;
+                var source = new HighPrecisionFrame(3, 1, 1, [minimum, (minimum + maximum) / 2, maximum]);
+                var input = PrecisionFrameProcessor.ApplyCurve(source, ToneCurve.Identity, CancellationToken.None);
+                var editor = new ToneCurveEditor { Histogram = input.Histogram };
+                Assert.True(editor.FitInputRange());
+                Assert.Equal((double)minimum, editor.Curve.Points[0].X);
+                Assert.Equal((double)maximum, editor.Curve.Points[^1].X);
+                var fitted = PrecisionFrameProcessor.ApplyCurve(source, editor.Curve, CancellationToken.None).Frame;
+                Assert.Equal((ushort)0, fitted.Pixels[0]);
+                Assert.InRange((int)fitted.Pixels[1], 30_000, 36_000);
+                Assert.Equal(ushort.MaxValue, fitted.Pixels[2]);
+                Assert.Equal(1, fitted.ColorHistogram!.Red[0]);
+                Assert.Equal(1, fitted.ColorHistogram.Red[255]);
+                editor.Histogram = new RgbHistogram(new long[256], new long[256], new long[256]) { Minimum = 0.5, Maximum = 0.5 };
+                Assert.False(editor.FitInputRange());
+            }
+            catch (Exception exception) { failure = exception; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    [Fact]
+    public void HistogramBarDoesNotExtendIntoAnEmptyAdjacentBin()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var bins = new long[256]; bins[100] = 1;
+                var chart = new ToneCurveEditor { Width = 272, Height = 210, Histogram = new RgbHistogram(bins, bins, bins) };
+                chart.Measure(new System.Windows.Size(272, 210));
+                chart.Arrange(new System.Windows.Rect(0, 0, 272, 210));
+                chart.UpdateLayout();
+                var drawing = System.Windows.Media.VisualTreeHelper.GetDrawing(chart);
+                var plot = Assert.Single(drawing.Children.OfType<System.Windows.Media.DrawingGroup>());
+                var bar = Assert.Single(plot.Children.OfType<System.Windows.Media.GeometryDrawing>(),
+                    item => item.Geometry is System.Windows.Media.RectangleGeometry);
+                var bounds = ((System.Windows.Media.RectangleGeometry)bar.Geometry).Rect;
+                Assert.Equal(108, bounds.Left);
+                Assert.Equal(109, bounds.Right);
+            }
+            catch (Exception exception) { failure = exception; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    [Fact]
+    public void HistogramDefaultsToLogarithmicScaleAndHidesBinsAtTheDisplayFloor()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var bins = new long[256]; bins[50] = 1; bins[75] = 100; bins[100] = 1000;
+                var chart = new ToneCurveEditor { Width = 272, Height = 210, Histogram = new RgbHistogram(bins, bins, bins) };
+                chart.Measure(new System.Windows.Size(272, 210));
+                chart.Arrange(new System.Windows.Rect(0, 0, 272, 210));
+                chart.UpdateLayout();
+                Dictionary<double, double> BarHeights()
+                {
+                    var drawing = System.Windows.Media.VisualTreeHelper.GetDrawing(chart);
+                    var plot = Assert.Single(drawing.Children.OfType<System.Windows.Media.DrawingGroup>());
+                    return plot.Children.OfType<System.Windows.Media.GeometryDrawing>()
+                        .Where(item => item.Geometry is System.Windows.Media.RectangleGeometry)
+                        .Select(item => ((System.Windows.Media.RectangleGeometry)item.Geometry).Rect)
+                        .ToDictionary(rectangle => rectangle.Left, rectangle => rectangle.Height);
+                }
+                Assert.True(chart.UseLogarithmicHistogram);
+                var logarithmic = BarHeights();
+                Assert.False(logarithmic.ContainsKey(58));
+                Assert.Equal(182 * 2d / 3, logarithmic[83], 6);
+                Assert.Equal(182, logarithmic[108], 6);
+                chart.UseLogarithmicHistogram = false;
+                chart.UpdateLayout();
+                var linear = BarHeights();
+                Assert.Equal(0.182, linear[58], 6);
+                Assert.Equal(18.2, linear[83], 6);
+                Assert.Equal(1000, bins[100]);
+            }
+            catch (Exception exception) { failure = exception; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    [Theory]
+    [InlineData(0, 0.2, 0.25, 0.0)]
+    [InlineData(1, 0.8, 0.85, 1.0)]
+    public void InputLevelMarkerRestoresBlackOrWhiteOutput(int selected, double previousOutput, double input, double expectedOutput)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var editor = new ToneCurveEditor();
+                var type = typeof(ToneCurveEditor);
+                var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+                type.GetField("_selected", flags)!.SetValue(editor, selected);
+                type.GetMethod("MoveSelected", flags)!.Invoke(editor, [selected == 0 ? 0d : 1d, previousOutput]);
+                type.GetMethod("MoveInputMarkerFromScreen", flags)!.Invoke(editor,
+                    [new System.Windows.Rect(0, 0, 100, 100), new System.Windows.Point(input * 100, 110)]);
+                Assert.Equal(input, editor.Curve.Points[selected].X, 8);
+                Assert.Equal(expectedOutput, editor.Curve.Points[selected].Y);
+                var pixel = new HighPrecisionFrame(1, 1, 1, [(float)input]);
+                var adjusted = PrecisionFrameProcessor.ApplyCurve(pixel, editor.Curve, CancellationToken.None);
+                Assert.Equal(selected == 0 ? (ushort)0 : ushort.MaxValue, adjusted.Frame.Pixels[0]);
+            }
+            catch (Exception exception) { failure = exception; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     [Theory]
@@ -307,7 +603,7 @@ public sealed class PhaseOneTests
         {
             var values = Enumerable.Range(0, 128 * channels).Select(i => (i + 1) / (float)(128 * channels + 1)).ToArray();
             var input = new HighPrecisionFrame(128, 1, channels, values);
-            var result = PrecisionFrameProcessor.ApplyCurve(input, ToneCurve.Identity, CancellationToken.None);
+            var result = PrecisionFrameProcessor.ApplyCurve(input, new ToneCurve([new(0.1, 0), new(0.9, 1)]), CancellationToken.None);
             var path = Path.Combine(root, "precision.png");
             result.Frame.SavePng(path);
             var bytes = File.ReadAllBytes(path);
@@ -319,6 +615,14 @@ public sealed class PhaseOneTests
             var decodedPixels = new ushort[result.Frame.Pixels.Length];
             converted.CopyPixels(decodedPixels, 128 * channels * 2, 0);
             Assert.Equal(result.Frame.Pixels, decodedPixels);
+            var outputHistogram = result.Frame.ColorHistogram!;
+            var expectedChannels = new[] { outputHistogram.Red, outputHistogram.Green, outputHistogram.Blue };
+            for (var channel = 0; channel < 3; channel++)
+            {
+                var expected = new long[256];
+                for (var pixel = 0; pixel < 128; pixel++) expected[decodedPixels[pixel * channels + (channels == 1 ? 0 : channel)] >> 8]++;
+                Assert.Equal(expected, expectedChannels[channel]);
+            }
         }
         finally { Directory.Delete(root, true); }
     }
@@ -339,17 +643,19 @@ public sealed class PhaseOneTests
     }
 
     [Theory]
-    [InlineData(1)]
-    [InlineData(4)]
-    public async Task TwentyBillionSampleRenderReportsTheFullBudgetAndCancels(int workers)
+    [InlineData(1, 20_000_000_000L)]
+    [InlineData(4, 20_000_000_000L)]
+    [InlineData(1, 1_000_000_000_000L)]
+    [InlineData(4, 1_000_000_000_000L)]
+    public async Task LargeSampleRenderReportsTheFullBudgetAndCancels(int workers, long budget)
     {
         var genome = new FlameGenerator().Generate(123);
-        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = 20_000_000_000, WorkerCount = workers };
+        var settings = new RenderSettings { Width = 64, Height = 64, SampleBudget = budget, WorkerCount = workers };
         using var cancellation = new CancellationTokenSource();
         var progress = new CancellingProgress(cancellation);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new CpuFlameRenderer().RenderAsync(genome, settings, progress, cancellation.Token));
         Assert.True(progress.SawSamples);
-        Assert.Equal(20_000_000_000L, progress.TotalSamples);
+        Assert.Equal(budget, progress.TotalSamples);
     }
 
     [Fact]
@@ -444,6 +750,7 @@ public sealed class PhaseOneTests
         var genome = new FlameGenerator().Generate(314159);
         var settings = new RenderSettings { SampleBudget = 1_000 };
         Assert.Equal(20_000_000, new RenderSettings().SampleBudget);
+        Assert.Equal(0, new RenderSettings().LowDensityCutoff);
         var frame = await new CpuFlameRenderer().RenderAsync(genome, settings, null, CancellationToken.None);
         Assert.Equal(2048, frame.Width);
         Assert.Equal(2048, frame.Height);

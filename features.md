@@ -119,7 +119,7 @@ re-render. They do not silently alter a saved .flame genome.
 | Setting | Default | Meaning |
 |---|---:|---|
 | Output resolution | 2048 by 2048 | Square final image size. |
-| Sample budget | 20,000,000 points | Histogram samples used by the CPU renderer. The UI permits 100 through 20,000,000,000. |
+| Sample budget | 20,000,000 points | Histogram samples used by the CPU renderer. The UI permits 100 through 1,000,000,000,000. |
 | Oversample | 1 | Real internal render multiplier before downsampling; valid values are 1 to 3. |
 | Filter radius | 0.5 | Downsampling filter radius. |
 | Gamma | 1 in the UI | Tone response for the viewport render. |
@@ -128,7 +128,7 @@ re-render. They do not silently alter a saved .flame genome.
 | White point | 0.0 | Normalized density at or below which pixels are white. |
 | Black point | 0.85 | Normalized density at or above which pixels are black. |
 | Contrast curve | 1.0 | One is neutral; greater values increase midtone separation. |
-| Low-density cutoff | 0.01 | Densities below this become white. |
+| Low-density cutoff | 0 | Densities below this become white. |
 | Palette | Monochrome | Explicit default; Fire, Ocean, and Violet are opt-in alternatives. |
 
 Re-render current flame toggles to cancellation while active. It loads the
@@ -142,14 +142,18 @@ pairs with the configured worker count; it may replace rated PNGs in place but
 preserves star folders and every source .flame file, including their saved
 cameras.
 
-Open flame re-render tool opens a resizable window for any supported `.flame`
-file, including files outside the selected workspace. It starts with the main
-window's sampling settings, remaining image settings, and palette, then lets the
-user edit them independently.
+Open flame re-render tool opens a resizable window for supported `.flame` files,
+including files outside the selected workspace. Add .flame(s) can add several
+files to a visible queue; duplicates are ignored and the user can select, remove,
+or move entries up and down. Selecting an entry loads it for preview. The tool
+starts with the main window's sampling settings, remaining image settings, and
+palette; the settings can then be edited independently. Low-density cutoff
+defaults to zero in the main window and is carried into the tool with the other
+image settings.
 Its controls are separated into two steps:
 
 1. Flame sampling: camera center X/Y, scale, rotation, square output size from
-   32 to 10,000 pixels, sample budget from 100 to 20 billion, oversampling from
+   32 to 10,000 pixels, sample budget from 100 to one trillion, oversampling from
    1 to 6, CPU workers, and built-in or source palette. Changing any of these
    requires sampling new points. Camera fields start with the source values.
 2. Image adjustments: a master RGB curve, filter radius, Gaussian smoothing,
@@ -158,14 +162,44 @@ Its controls are separated into two steps:
 
 The master curve is drawn over the red, green, and blue intensity histograms of
 the image after tone mapping, filtering, and smoothing, but before the curve.
-The histogram uses a logarithmic count scale; monochrome channels appear in gray.
-It groups the higher-precision values into 256 bins for display only.
+The histogram uses a logarithmic pixel-count scale by default. Bars at or below
+0.1% of the tallest displayed bar are hidden on this scale; larger bars rise
+logarithmically from that floor. An optional linear scale shows all counts.
+This display floor does not change the image data or automatic curve endpoints.
+Black is at the left and white at the right; monochrome channels appear in gray.
+It groups the higher-precision values into 256 equal-width bins for display only,
+drawn as bars within their actual intervals rather than a connected outline.
+The input histogram remains visible; an optional outlined overlay shows the
+histogram of the last applied output, computed from the same 16-bit values saved
+in the PNG. Both use the selected height scale. Pending edits leave the
+overlay and preview at the last applied result until Re-render is pressed.
+The window displays the current input-marker positions and actual pre-curve
+input channel range as percentages rounded for display, and the last output channel range on the
+0-to-65535 scale. Color images use the extrema across all RGB channels.
+Fit input range (reset curve) resets the curve to a straight line mapping the
+actual minimum input channel value to black and maximum to white; it is available
+when those values differ and other pending settings affecting the input have been
+applied. This operation uses the retained sampled data and does not re-sample
+points. It intentionally removes existing intermediate curve points.
 Applying a curve-only edit leaves the histogram unchanged; applying a change to
 the pre-curve image updates it. The curve starts as an identity diagonal.
+Automatic full-range RGB curve is an optional mode that replaces the manual
+curve with a straight line through each image's actual minimum and maximum input
+channel values after filtering and smoothing. It maps those endpoints to black
+and white before 16-bit quantization, without clipping other input values. A
+uniform image remains unchanged. Color images use the range across all channels,
+so the extrema are channel values rather than necessarily pure black/white pixels.
+Rare extreme pixels can limit the stretch even when most values occupy a narrower
+range; mapping the extrema does not make the histogram evenly distributed.
+In automatic mode the computed curve is displayed and the manual curve controls
+are disabled. Switching the mode is an image adjustment and uses retained samples.
 Clicking adds a point, dragging moves it, and right-clicking an interior point
-removes it. Black and white markers below the graph move the input endpoints
-horizontally; the endpoint points can also move vertically or horizontally.
-Input values outside those endpoints map to the corresponding endpoint output.
+removes it. Dragging the black or white marker below the graph moves that input
+endpoint horizontally and resets its output to true black or true white,
+respectively, even if the corresponding endpoint was previously moved vertically.
+The endpoint points can also move vertically or horizontally to create lifted
+blacks or reduced whites when desired.
+Input values at or outside those endpoints map to the corresponding endpoint output.
 Points stay ordered horizontally; vertical values may be non-monotonic. A
 shape-preserving cubic interpolation joins them smoothly. Arrow keys move the
 selected point, Insert adds one, Delete removes an interior point, and Reset
@@ -177,6 +211,16 @@ point, and black point; those separate controls remain in the main window.
 
 A single Re-render button chooses the necessary work based on the settings that
 changed; the window states whether it will sample again or apply adjustments.
+With more than one queued flame, Re-render instead processes the queue in the
+displayed order, one flame at a time, using the same camera and render/adjustment
+settings for each. Use source palette selects each source's palette; otherwise the
+selected built-in palette is applied to every flame. Each completed image is saved
+as a 16-bit PNG in a `rerendered` subfolder alongside its source, using a unique
+name when a file already exists. The source `.flame` and existing images are not
+overwritten. The preview and histogram show the last successfully saved image.
+An individual failure is reported and processing continues with the next entry;
+Cancel stops the queue and keeps previously saved images. The active file is
+published only after its save completes and cancellation is checked.
 If nothing changed, it does not repeat work. Pending edits do not alter the last
 preview or saved PNG; saving always saves the displayed preview. Each adjustment
 is recalculated from the retained data rather than compounding earlier edits.
