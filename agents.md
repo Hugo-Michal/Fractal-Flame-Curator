@@ -22,7 +22,7 @@ reproducible, Apophysis-compatible fractal flames, rendering them locally, and
 collecting human one-to-five-star preferences. Optional AI scoring ranks
 candidates using those human ratings, but manual ratings remain authoritative.
 
-The current product is version 1.5.0. It is a WPF/.NET 8 application with a
+The current product is version 1.5.1. It is a WPF/.NET 8 application with a
 managed CPU renderer and an optional CUDA-only Python DINOv2 worker. Do not
 reintroduce the historical web server, genetic algorithm, heuristic evaluator,
 or research corpus into this application.
@@ -48,6 +48,10 @@ dotnet run --project .\src\FractalFlameCurator\FractalFlameCurator.csproj
 The application project publishes the bundled Ai/dinov2_service.py worker.
 For a distributable Windows x64 build, use a self-contained publish and keep
 that Python file beside the executable under Ai/.
+
+After every application rebuild for installation, verify that the replacement
+launches, update its desktop shortcut, and delete the superseded installed
+application directory. Preserve user workspaces and other personal files.
 
 ## Repository map
 

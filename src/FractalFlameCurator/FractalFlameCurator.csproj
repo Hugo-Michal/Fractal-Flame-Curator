@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>FractalFlameCurator</AssemblyName>
     <RootNamespace>FractalFlameCurator</RootNamespace>
-    <Version>1.5.0</Version>
+    <Version>1.5.1</Version>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

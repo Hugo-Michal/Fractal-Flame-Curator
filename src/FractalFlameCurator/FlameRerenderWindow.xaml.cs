@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Collections.ObjectModel;
-using System.Runtime.InteropServices;
 using System.Windows;
 using FractalFlameCurator.Controls;
 using WpfTextBox = System.Windows.Controls.TextBox;
@@ -168,7 +167,7 @@ public partial class FlameRerenderWindow : Window
                 StatusText.Text = "No settings have changed.";
                 return;
             }
-            CheckMemory(request.Settings, request.Genome.Palette, request.Smoothing, change);
+            CheckImageSize(request.Settings);
         }
         catch (Exception exception)
         {
@@ -249,7 +248,7 @@ public partial class FlameRerenderWindow : Window
         var batch = new FlameBatchRerenderer(_session);
         var results = await batch.RenderAsync(paths, request.Genome, request.Settings, request.Smoothing, request.Curve,
             request.AutomaticCurve, request.UseSourcePalette,
-            (settings, palette, smoothing) => CheckMemory(settings, palette, smoothing, FlameRenderChange.Sampling), progress,
+            (settings, _, _) => CheckImageSize(settings), progress,
             async (path, genome, prepared, output) =>
             {
                 var bitmap = await Task.Run(prepared.Frame.ToBitmapSource, cancellation.Token);
@@ -340,38 +339,11 @@ public partial class FlameRerenderWindow : Window
 
     private sealed record RenderRequest(FlameGenome Genome, RenderSettings Settings, double Smoothing, ToneCurve Curve, bool AutomaticCurve, bool UseSourcePalette);
 
-    private static void CheckMemory(RenderSettings settings, PaletteDefinition palette, double smoothing, FlameRenderChange change)
+    private static void CheckImageSize(RenderSettings settings)
     {
         var side = (long)settings.Width * settings.Oversample;
         var pixels = side * side;
         if (pixels > int.MaxValue / 4) throw new InvalidOperationException("This size and oversampling combination exceeds the renderer's image limit.");
-        var monochrome = string.Equals(palette.Name, PaletteDefinition.Monochrome.Name, StringComparison.OrdinalIgnoreCase);
-        var channels = monochrome ? 1L : 3L;
-        var bytesPerInternalPixel = channels * 4 + (change == FlameRenderChange.Sampling ? (monochrome ? 8L : 32L) : 0L);
-        var estimated = pixels * bytesPerInternalPixel + (long)settings.Width * settings.Height * channels * (smoothing > 0 ? 20L : 12L);
-        var limit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes * 3 / 5;
-        var memory = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
-        if (GlobalMemoryStatusEx(ref memory)) limit = Math.Min(limit, (long)(memory.AvailablePhysical * 3 / 4));
-        if (estimated > limit)
-            throw new InvalidOperationException($"This combination needs about {estimated / 1_073_741_824d:F1} GB. Reduce size or oversampling to fit the memory limit.");
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GlobalMemoryStatusEx(ref MemoryStatus buffer);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MemoryStatus
-    {
-        public uint Length;
-        public uint MemoryLoad;
-        public ulong TotalPhysical;
-        public ulong AvailablePhysical;
-        public ulong TotalPageFile;
-        public ulong AvailablePageFile;
-        public ulong TotalVirtual;
-        public ulong AvailableVirtual;
-        public ulong AvailableExtendedVirtual;
     }
 
     private static string Format(double value) => value.ToString("R", CultureInfo.InvariantCulture);

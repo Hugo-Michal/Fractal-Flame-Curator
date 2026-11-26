@@ -302,6 +302,20 @@ public sealed class PhaseOneTests
     }
 
     [Fact]
+    public void StandaloneImageSizeCheckAcceptsLargeRendersAndRejectsOversizedArrays()
+    {
+        var check = typeof(FlameRerenderWindow).GetMethod("CheckImageSize",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+        check.Invoke(null, [new RenderSettings { Width = 5_600, Height = 5_600, Oversample = 3 }]);
+        check.Invoke(null, [new RenderSettings { Width = 10_000, Height = 10_000, Oversample = 2 }]);
+
+        var exception = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+            check.Invoke(null, [new RenderSettings { Width = 10_000, Height = 10_000, Oversample = 3 }]));
+        Assert.IsType<InvalidOperationException>(exception.InnerException);
+    }
+
+    [Fact]
     public async Task BatchRendersInOrderWithSharedSettingsAndPreservesExistingFiles()
     {
         var root = NewTempDirectory();

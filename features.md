@@ -19,7 +19,7 @@ The application helps a human curate generated fractal flames:
 5. Optional AI learns a preference estimate from those human ratings and shows
    the resulting score without replacing human judgment.
 
-Version 1.5.0 is a native Windows WPF application. The primary workflow must work
+Version 1.5.1 is a native Windows WPF application. The primary workflow must work
 without a web server, remote rendering, a genetic algorithm, a preexisting
 image dataset, Python, CUDA, or AI. The optional AI feature is additive and
 never controls or edits human ratings.
@@ -238,9 +238,10 @@ preview and Save 16-bit PNG As use that completed image: monochrome output is a
 file is written until the user saves it. The main candidate rendering workflow
 continues to use its existing 8-bit PNG format.
 
-Oversampling and output size are checked against image and estimated available
-memory limits before sampling or remapping; existing retained data is included
-in the available-memory check. Sample-budget fields in both windows and the
+Oversampling and output size are checked against the renderer's image limit
+before sampling or remapping. The tool attempts allocations without an
+available-memory threshold and reports render failures if they occur.
+Sample-budget fields in both windows and the
 standalone output-size field group digits with spaces as the user types; the
 fields accept grouped or ungrouped whole numbers and report invalid values.
 Displayed sample progress also groups digits with spaces. Optional Gaussian
